@@ -1,0 +1,21 @@
+{
+  "id": "sysml_cce218e2_f996a5ff_1757373059",
+  "task": "Model a Pen make it concise and simple.",
+  "generated_code": "package PenExample {\n    private import ScalarValues::*;\n    private import ISQ::MassValue;\n\n    attribute def Ink {\n        attribute color: String;\n        attribute viscosity: Real;\n    }\n\n    part def Pen {\n        attribute brand: String;\n        attribute model: String;\n        attribute mass: MassValue;\n        attribute tipDiameter: Real;\n        attribute maxRange: Real;\n        attribute refillType: String;\n        attribute ink: Ink;\n\n        requirement writePerformance {\n            text = \"The pen shall write clearly and legibly.\";\n        }\n    }\n}",
+  "human_feedback": "",
+  "validation_info": {
+    "success": true,
+    "validation_count": 1,
+    "success_rate": 1.0,
+    "final_errors": []
+  },
+  "workflow_metadata": {
+    "iterations_used": 1,
+    "max_iterations": 10,
+    "human_review_enabled": true,
+    "human_response": "approve",
+    "workflow_status": "human_approved"
+  },
+  "created_at": "2025-09-09T01:10:59.216048",
+  "embedding_text": "Task: Model a Pen make it concise and simple. | Parts: part def Pen {"
+}

@@ -1,0 +1,21 @@
+{
+  "id": "sysml_00feb0ad_facff680_1757278824",
+  "task": "Model a PC, with Display resolution of 1920x1080, Mouse, Keyboard, and a Cabinet.",
+  "generated_code": "package PersonalComputer {\n    private import ISQ::*;\n    private import SI::*;\n    private import ScalarValues::*;\n    \n    // Definition of Keyboard part\n    part def Keyboard {\n        attribute type: String = \"Standard\";\n        attribute numberOfKeys: Integer = 105;\n    }\n\n    // Definition of Mouse part\n    part def Mouse {\n        attribute type: String = \"Wireless\";\n        attribute dpi: Real = 1200.0;\n    }\n\n    // Definition of Monitor part\n    part def Monitor {\n        attribute resolutionWidth: Integer = 1920;\n        attribute resolutionHeight: Integer = 1080;\n        attribute type: String = \"LED\";\n    }\n\n    // Definition of Cabinet part\n    part def Cabinet {\n        attribute material: String = \"Aluminum\";\n        attribute color: String = \"Black\";\n    }\n\n    // Definition of PersonalComputer part\n    part def PersonalComputer {\n        part monitor: Monitor;\n        part keyboard: Keyboard;\n        part mouse: Mouse;\n        part cabinet: Cabinet;\n    }\n}",
+  "human_feedback": "",
+  "validation_info": {
+    "success": true,
+    "validation_count": 3,
+    "success_rate": 0.6666666666666666,
+    "final_errors": []
+  },
+  "workflow_metadata": {
+    "iterations_used": 2,
+    "max_iterations": 10,
+    "human_review_enabled": true,
+    "human_response": "approve",
+    "workflow_status": "human_approved"
+  },
+  "created_at": "2025-09-07T23:00:24.471529",
+  "embedding_text": "Task: Model a PC, with Display resolution of 1920x1080, Mouse, Keyboard, and a Cabinet. | Comments: // Definition of Keyboard part // Definition of Mouse part // Definition of Monitor part // Definition of Cabinet part // Definition of PersonalComputer part | Parts: part def Keyboard { part def Mouse { part def Monitor { part def Cabinet { part def PersonalComputer {"
+}

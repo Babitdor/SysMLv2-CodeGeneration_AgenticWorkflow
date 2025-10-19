@@ -1,0 +1,21 @@
+{
+  "id": "sysml_d28462c8_50ac321a_1757342067",
+  "task": "Model a simple electric vehicle with a 75kWh battery pack, regenerative braking system.",
+  "generated_code": "package '13a-System Breakdown-2' {\n    private import SI::*;\n    private import ISQ::MassValue;\n    private import ScalarValues::Real;\n    \n    attribute def Voltage { \n        attribute nominalValue: Real; \n    }\n    \n    part def Battery {\n        attribute capacity: Real; // kWh\n        attribute voltage: Voltage { \n            :>> nominalValue = 48.0; \n        }\n    }\n    \n    part def Motor {\n        attribute maxTorque: Real; // Nm\n        attribute maxRPM: Real;\n    }\n    \n    part def Controller {\n        attribute processingSpeed: Real; // MHz\n    }\n    \n    part def Vehicle {\n        part battery: Battery { \n            :>> capacity = 75.0; \n        }\n        part motor: Motor { \n            :>> maxTorque = 300.0; \n            :>> maxRPM = 6000.0; \n        }\n        part controller: Controller { \n            :>> processingSpeed = 200.0; \n        }\n    }\n}",
+  "human_feedback": "",
+  "validation_info": {
+    "success": true,
+    "validation_count": 3,
+    "success_rate": 0.3333333333333333,
+    "final_errors": []
+  },
+  "workflow_metadata": {
+    "iterations_used": 3,
+    "max_iterations": 10,
+    "human_review_enabled": true,
+    "human_response": "approve",
+    "workflow_status": "human_approved"
+  },
+  "created_at": "2025-09-08T16:34:27.471247",
+  "embedding_text": "Task: Model a simple electric vehicle with a 75kWh battery pack, regenerative braking system. | Parts: part def Battery { part def Motor { part def Controller { part def Vehicle { part battery: Battery { part motor: Motor { part controller: Controller {"
+}

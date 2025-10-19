@@ -1,0 +1,21 @@
+{
+  "id": "sysml_bfc6fed8_b77d5be5_1757279078",
+  "task": "Model a smartphone with a 6.1-inch OLED display, 128GB storage, dual camera system, and wireless charging capability.",
+  "generated_code": "package 'Smartphone Model' {\n    private import ScalarValues::*;\n    private import SI::*;\n\n    // Definitions of parts and sub-parts\n    part def Smartphone {\n        attribute screenSize :> ISQ::length = 6.1 [m];\n        attribute storageCapacity : Real = 128.0 [GB];\n        part camera : DualCamera;\n        port wirelessChargingPort : WirelessChargingPort;\n    }\n\n    part def DualCamera {\n        part frontCamera : Camera[1];\n        part rearCamera : Camera[2];\n    }\n\n    part def Camera {\n        attribute megapixels : Real;\n        attribute aperture : Real;\n    }\n\n    port def WirelessChargingPort;\n\n    // Parts usage\n    part mySmartphone : Smartphone {\n        :>> screenSize = 6.1 [m];\n        :>> storageCapacity = 128.0 [GB];\n\n        part :>> camera {\n            part :>> frontCamera {\n                attribute :>> megapixels = 12.0;\n                attribute :>> aperture = 2.4;\n            }\n            part :>> rearCamera {\n                attribute :>> megapixels = 48.0;\n                attribute :>> aperture = 1.8;\n            }\n        }\n\n        port :>> wirelessChargingPort;\n    }\n\n    // Connections\n    connection wirelessCharging connect mySmartphone.wirelessChargingPort to WirelessCharger.wirelessChargingPort;\n\n    // Supporting parts and ports\n    part def WirelessCharger {\n        port wirelessChargingPort : WirelessChargingPort;\n    }\n\n    part wirelessCharger : WirelessCharger {\n        port :>> wirelessChargingPort;\n    }\n}",
+  "human_feedback": "",
+  "validation_info": {
+    "success": true,
+    "validation_count": 1,
+    "success_rate": 1.0,
+    "final_errors": []
+  },
+  "workflow_metadata": {
+    "iterations_used": 1,
+    "max_iterations": 10,
+    "human_review_enabled": true,
+    "human_response": "approve",
+    "workflow_status": "human_approved"
+  },
+  "created_at": "2025-09-07T23:04:38.709557",
+  "embedding_text": "Task: Model a smartphone with a 6.1-inch OLED display, 128GB storage, dual camera system, and wireless charging capability. | Comments: // Definitions of parts and sub-parts // Parts usage // Connections // Supporting parts and ports | Parts: part def Smartphone { part def DualCamera { part def Camera { part mySmartphone : Smartphone { part :>> camera { part :>> frontCamera { part :>> rearCamera { part def WirelessCharger { part wirelessCharger : WirelessCharger {"
+}

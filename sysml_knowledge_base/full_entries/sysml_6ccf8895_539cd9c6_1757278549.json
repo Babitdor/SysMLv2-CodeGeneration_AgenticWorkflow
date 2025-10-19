@@ -1,0 +1,21 @@
+{
+  "id": "sysml_6ccf8895_539cd9c6_1757278549",
+  "task": "Model a Camera, with two functions, Picture Taking and Focus.",
+  "generated_code": "package CameraModel {\n    private import ScalarValues::*;\n    private import SI::*;\n\n    // Definitions of attribute types\n    attribute def PictureSize;\n    attribute def ImageSize :> PictureSize;\n\n    // Definition of part type Camera\n    part def Camera {\n        // Performing the TakePicture action with specific input and output\n        perform action takePicture : TakePicture {\n            in attribute resolution : ImageSize = \"4K\";  // Binding input parameter 'resolution'\n            out picture : PictureSize;  // Output parameter 'picture' of type PictureSize\n        }\n\n        // Performing the Focus action with specific input\n        perform action focus : Focus {\n            in scene : PictureSize;  // Input parameter 'scene' of type PictureSize\n        }\n    }\n\n    // Definition of action type TakePicture\n    action def TakePicture {\n        in attribute resolution : ImageSize;  // Input parameter 'resolution' of type ImageSize\n        out picture : PictureSize;  // Output parameter 'picture' of type PictureSize\n    }\n\n    // Definition of action type Focus\n    action def Focus {\n        in scene : PictureSize;  // Input parameter 'scene' of type PictureSize\n    }\n}",
+  "human_feedback": "",
+  "validation_info": {
+    "success": true,
+    "validation_count": 1,
+    "success_rate": 1.0,
+    "final_errors": []
+  },
+  "workflow_metadata": {
+    "iterations_used": 1,
+    "max_iterations": 10,
+    "human_review_enabled": true,
+    "human_response": "approve",
+    "workflow_status": "human_approved"
+  },
+  "created_at": "2025-09-07T22:55:49.144603",
+  "embedding_text": "Task: Model a Camera, with two functions, Picture Taking and Focus. | Comments: // Definitions of attribute types // Definition of part type Camera // Performing the TakePicture action with specific input and output // Performing the Focus action with specific input // Definition of action type TakePicture // Definition of action type Focus | Parts: part def Camera {"
+}

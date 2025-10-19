@@ -1,0 +1,21 @@
+{
+  "id": "sysml_65a97e50_fcfff9dc_1757282497",
+  "task": "Model a laptop computer with 16GB RAM, 512GB SSD, integrated graphics, and a 14-inch touchscreen display.",
+  "generated_code": "package 'Laptop Computer' {\n    private import ISQ::MassValue;\n    private import ISQ::LengthValue;\n    private import SI::kg;\n    private import SI::mm;\n    private import SI::J;\n    private import SI::B;\n\n    attribute '16GB RAM' : MassValue = 16 * 1024 * 1024 * 1024 [B];\n    attribute '512GB SSD' : MassValue = 512 * 1024 * 1024 * 1024 [B];\n    attribute '14-inch Display' : LengthValue = 14 * mm;\n\n    part laptop {\n        attribute mass : MassValue = 2 * kg;\n        attribute ram : MassValue = '16GB RAM';\n        attribute storage : MassValue = '512GB SSD';\n        attribute display : LengthValue = '14-inch Display';\n\n        part processor {\n            // Processor-specific attributes\n        }\n\n        part graphics {\n            // Graphics-specific attributes (integrated in this case)\n        }\n\n        part battery {\n            attribute capacity : MassValue = 4000 * J;\n        }\n\n        part keyboard {\n            // Keyboard-specific attributes\n        }\n    }\n}",
+  "human_feedback": "",
+  "validation_info": {
+    "success": true,
+    "validation_count": 3,
+    "success_rate": 0.3333333333333333,
+    "final_errors": []
+  },
+  "workflow_metadata": {
+    "iterations_used": 3,
+    "max_iterations": 10,
+    "human_review_enabled": true,
+    "human_response": "approve",
+    "workflow_status": "human_approved"
+  },
+  "created_at": "2025-09-08T00:01:37.219446",
+  "embedding_text": "Task: Model a laptop computer with 16GB RAM, 512GB SSD, integrated graphics, and a 14-inch touchscreen display. | Comments: // Processor-specific attributes // Graphics-specific attributes (integrated in this case) // Keyboard-specific attributes | Parts: part laptop { part processor { part graphics { part battery { part keyboard {"
+}

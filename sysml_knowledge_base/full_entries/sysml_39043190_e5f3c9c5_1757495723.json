@@ -1,0 +1,21 @@
+{
+  "id": "sysml_39043190_e5f3c9c5_1757495723",
+  "task": "Model a Pen",
+  "generated_code": "package PenExample {\n    private import ScalarValues::*;\n    public import SI::*;\n    \n    // Attributes\n    attribute material : String = \"metal\";\n    attribute color : String = \"black\";\n    attribute tipDiameter : LengthValue = 0.5 [mm];\n    attribute inkColor : String = \"blue\";\n    \n    // Constraints\n    constraint durability { material == \"metal\" }\n    \n    // Requirement\n    requirement writeQuality {\n        id = \"WRITE-001\";\n        text = \"The pen shall have a tip diameter of 0.5 mm and write clearly.\";\n    }\n}",
+  "human_feedback": "",
+  "validation_info": {
+    "success": true,
+    "validation_count": 2,
+    "success_rate": 1.0,
+    "final_errors": []
+  },
+  "workflow_metadata": {
+    "iterations_used": 1,
+    "max_iterations": 10,
+    "human_review_enabled": true,
+    "human_response": "approve",
+    "workflow_status": "human_approved"
+  },
+  "created_at": "2025-09-10T11:15:23.312071",
+  "embedding_text": "Task: Model a Pen | Comments: // Attributes // Constraints // Requirement"
+}

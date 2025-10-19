@@ -1,0 +1,21 @@
+{
+  "id": "sysml_9163e62a_1eb770dd_1757207778",
+  "task": "Create a basic SysML part definition for a simple Door with a handle",
+  "generated_code": "package DoorExample {\n    private import ScalarValues::*;\n    private import SI::*;\n\n    part def Door {\n        attribute isOpen : Boolean;\n        part handle {\n            attribute isLocked : Boolean;\n        }\n    }\n}",
+  "human_feedback": "",
+  "validation_info": {
+    "success": true,
+    "validation_count": 2,
+    "success_rate": 1.0,
+    "final_errors": []
+  },
+  "workflow_metadata": {
+    "iterations_used": 1,
+    "max_iterations": 10,
+    "human_review_enabled": true,
+    "human_response": "approve",
+    "workflow_status": "human_approved"
+  },
+  "created_at": "2025-09-07T03:16:18.278106",
+  "embedding_text": "Task: Create a basic SysML part definition for a simple Door with a handle | Parts: part def Door { part handle {"
+}

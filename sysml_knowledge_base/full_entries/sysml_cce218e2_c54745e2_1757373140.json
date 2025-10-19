@@ -1,0 +1,21 @@
+{
+  "id": "sysml_cce218e2_c54745e2_1757373140",
+  "task": "Model a Pen make it concise and simple.",
+  "generated_code": "package Pen {\n    private import ScalarValues::*;\n    private import SI::*;\n\n    attribute def PenDef;\n\n    part def Pen {\n        :>> mass : MassValue = 100.0 [g];\n        attribute color: String = \"blue\";\n        attribute inkLevel: Real = 100.0;\n        attribute isCharging: Boolean = false;\n        \n        action write: Write {\n            in input: String;\n            out output: String;\n        }\n        \n        action charge: Charge {\n            in input: Real;\n            out output: Real;\n        }\n    }\n\n    action def Write;\n    action def Charge;\n}",
+  "human_feedback": "",
+  "validation_info": {
+    "success": true,
+    "validation_count": 1,
+    "success_rate": 1.0,
+    "final_errors": []
+  },
+  "workflow_metadata": {
+    "iterations_used": 1,
+    "max_iterations": 10,
+    "human_review_enabled": true,
+    "human_response": "approve",
+    "workflow_status": "human_approved"
+  },
+  "created_at": "2025-09-09T01:12:20.735566",
+  "embedding_text": "Task: Model a Pen make it concise and simple. | Parts: part def Pen {"
+}

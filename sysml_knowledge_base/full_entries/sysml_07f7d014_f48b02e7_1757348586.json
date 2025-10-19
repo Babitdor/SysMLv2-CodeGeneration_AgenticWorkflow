@@ -1,0 +1,21 @@
+{
+  "id": "sysml_07f7d014_f48b02e7_1757348586",
+  "task": "Model an HVAC system with air handler, ductwork, thermostats, and variable speed drives.",
+  "generated_code": "package '15-10-System Decomposition' {\n\tprivate import SI::*;\n\tprivate import ISQ::PowerValue;\n\t\n    attribute 'max air flow' = 1000 [m³/h];\n    attribute 'min air flow' = 500 [m³/h];\n    attribute 'cooling capacity' = 20000 [W];\n    attribute 'heating capacity' = 40000 [W];\n    attribute 'return air temperature' = 30 [°C];\n    attribute 'supply air temperature' = 15 [°C];\n    attribute 'minimum operating frequency' = 0.25;\n    attribute 'maximum operating frequency' = 1.0;\n    \n    part def AirHandler {\n        attribute flowRate :> 'max air flow';\n        attribute coolingCapacity :> 'cooling capacity';\n        attribute heatingCapacity :> 'heating capacity';\n        attribute returnAirTemp :> 'return air temperature';\n        attribute supplyAirTemp :> 'supply air temperature';\n        perform action control;\n    }\n    \n    part def Ductwork {\n        attribute flowRate :> 'max air flow';\n    }\n    \n    part def Thermostat {\n        attribute setPointTemp : Real;\n        perform action sensing;\n    }\n    \n    part def VariableSpeedDrive {\n        attribute frequency : Real;\n        attribute minFrequency :> 'minimum operating frequency';\n        attribute maxFrequency :> 'maximum operating frequency';\n        perform action control;\n    }\n    \n    connection def AirFlow {\n        attribute flowRate :> 'max air flow';\n    }\n    \n    connection def TemperatureSignal;\n    \n    part HVACSystem {\n        part thermostat : Thermostat;\n        part airHandler : AirHandler {\n            port returnAirPort {\n                out temp : Real;\n                out flow : Real;\n            }\n            port supplyAirPort {\n                in temp : Real;\n                in flow : Real;\n            }\n        }\n        part ductwork : Ductwork {\n            port returnAirPort {\n                in temp : Real;\n                in flow : Real;\n            }\n            port supplyAirPort {\n                out temp : Real;\n                out flow : Real;\n            }\n        }\n        part variableSpeedDrive : VariableSpeedDrive {\n            port controlPort {\n                in frequency : Real;\n            }\n        }\n        \n        connect thermostat.sensing to airHandler.returnAirPort.temp;\n        connect airHandler.supplyAirPort to ductwork.returnAirPort;\n        connect ductwork.supplyAirPort to airHandler.returnAirPort;\n        connect variableSpeedDrive.controlPort to thermostat.control;\n    }\n}",
+  "human_feedback": "",
+  "validation_info": {
+    "success": true,
+    "validation_count": 1,
+    "success_rate": 1.0,
+    "final_errors": []
+  },
+  "workflow_metadata": {
+    "iterations_used": 1,
+    "max_iterations": 10,
+    "human_review_enabled": true,
+    "human_response": "approve",
+    "workflow_status": "human_approved"
+  },
+  "created_at": "2025-09-08T18:23:06.132072",
+  "embedding_text": "Task: Model an HVAC system with air handler, ductwork, thermostats, and variable speed drives. | Parts: part def AirHandler { part def Ductwork { part def Thermostat { part def VariableSpeedDrive { part HVACSystem { part airHandler : AirHandler { part ductwork : Ductwork { part variableSpeedDrive : VariableSpeedDrive {"
+}

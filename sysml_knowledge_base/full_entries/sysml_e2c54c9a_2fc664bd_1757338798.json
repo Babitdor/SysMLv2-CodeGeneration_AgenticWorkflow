@@ -1,0 +1,21 @@
+{
+  "id": "sysml_e2c54c9a_2fc664bd_1757338798",
+  "task": "Create a simple SysML part definition for a Car with mass and color attributes.",
+  "generated_code": "package CarPartDefinition {\n    public import ScalarValues::*;\n    public import SI::*;\n\n    attribute def Car {\n        attribute mass :> ISQ::mass = 1200.0 [kg];\n        attribute color : String;\n        attribute maxSpeed : Real = 120.0; // km/h\n        attribute enginePower : PowerValue;\n        attribute fuelCapacity : LengthValue;\n        attribute fuelEconomy : Real; // km/L\n        attribute transmissionType : String; // manual or automatic\n        attribute hasSunroof : Boolean;\n        attribute hasLeatherInterior : Boolean;\n        attribute warrantyPeriod : Integer; // in years\n    }\n}",
+  "human_feedback": "",
+  "validation_info": {
+    "success": true,
+    "validation_count": 3,
+    "success_rate": 1.0,
+    "final_errors": []
+  },
+  "workflow_metadata": {
+    "iterations_used": 1,
+    "max_iterations": 5,
+    "human_review_enabled": true,
+    "human_response": "approve",
+    "workflow_status": "human_approved"
+  },
+  "created_at": "2025-09-08T15:39:58.082916",
+  "embedding_text": "Task: Create a simple SysML part definition for a Car with mass and color attributes. | Parts: package CarPartDefinition {"
+}

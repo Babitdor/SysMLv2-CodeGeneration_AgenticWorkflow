@@ -1,0 +1,21 @@
+{
+  "id": "sysml_6ccf8895_0be7cc31_1757277455",
+  "task": "Model a Camera, with two functions, Picture Taking and Focus.",
+  "generated_code": "package CameraModel {\n    private import ScalarValues::*;\n    private import SI::*;\n\n    attribute def PictureSize;\n    attribute def ImageSize :> PictureSize;\n\n    part def Camera {\n        perform action takePicture : TakePicture;\n        perform action focus : Focus;\n    }\n\n    action def TakePicture {\n        in attribute resolution : ImageSize = \"4K\";\n        out picture : PictureSize;\n    }\n\n    action def Focus {\n        in scene : PictureSize;\n        out image : ImageSize;\n    }\n}",
+  "human_feedback": "",
+  "validation_info": {
+    "success": true,
+    "validation_count": 7,
+    "success_rate": 0.14285714285714285,
+    "final_errors": []
+  },
+  "workflow_metadata": {
+    "iterations_used": 7,
+    "max_iterations": 10,
+    "human_review_enabled": true,
+    "human_response": "approve",
+    "workflow_status": "human_approved"
+  },
+  "created_at": "2025-09-07T22:37:35.970566",
+  "embedding_text": "Task: Model a Camera, with two functions, Picture Taking and Focus. | Parts: part def Camera {"
+}

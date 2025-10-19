@@ -1,0 +1,21 @@
+{
+  "id": "sysml_39043190_ede0e0b9_1757377997",
+  "task": "Model a Pen",
+  "generated_code": "package '10-Pen' {\n    private import ISQ::*;\n    private import SI::*;\n\n    attribute def PenMassValue :> MassValue;\n    attribute def PenLengthValue :> LengthValue;\n    attribute def PenWidthValue :> LengthValue;\n\n    attribute def PenMaterialChoices {\n        attribute m;\n        attribute n;\n        attribute o;\n    }\n\n    attribute def PenMaterialEnum :> PenMaterialChoices;\n\n    part def Pen {\n        attribute mass : PenMassValue [1] default 100.0 ['g'];\n        attribute length : PenLengthValue [1] default 150.0 ['mm'];\n        attribute width : PenWidthValue [1] default 7.0 ['mm'];\n\n        attribute material : PenMaterialEnum [1];\n    }\n\n    part p : Pen;\n}",
+  "human_feedback": "",
+  "validation_info": {
+    "success": true,
+    "validation_count": 9,
+    "success_rate": 0.1111111111111111,
+    "final_errors": []
+  },
+  "workflow_metadata": {
+    "iterations_used": 9,
+    "max_iterations": 10,
+    "human_review_enabled": true,
+    "human_response": "approve",
+    "workflow_status": "human_approved"
+  },
+  "created_at": "2025-09-09T02:33:17.220653",
+  "embedding_text": "Task: Model a Pen | Parts: part def Pen {"
+}

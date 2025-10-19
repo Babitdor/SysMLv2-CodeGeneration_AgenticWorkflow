@@ -1,0 +1,21 @@
+{
+  "id": "sysml_9163e62a_95f562a0_1757206529",
+  "task": "Create a basic SysML part definition for a simple Door with a handle",
+  "generated_code": "package '10a-Element Grouping' {\n    private import ScalarValues::*;\n    private import SI::*;\n\n    part def Door {\n        attribute isOpen : Boolean;\n        part handle {\n            attribute isLocked : Boolean;\n        }\n    }\n\n    part def Engine {\n        attribute rpm : Real;\n        port fuelIn : FuelPort;\n    }\n\n    port def FuelPort {\n        out fuelFlow : ForceValue;\n    }\n\n    part def Transmission {\n        attribute gearRatio : Real;\n    }\n\n    part def Clutch {\n        attribute engaged : Boolean;\n    }\n\n    part def Differential {\n        attribute engagedGears : Integer;\n    }\n\n    part def Wheel {\n        attribute diameter : LengthValue;\n    }\n\n    part def Axle {\n        attribute torque : ForceValue;\n    }\n\n    part def Vehicle {\n        part door : Door;\n        part engine : Engine;\n        part transmission : Transmission;\n        part clutch : Clutch;\n        part differential : Differential;\n        part frontWheel : Wheel;\n        part rearWheel : Wheel;\n        part driveAxle : Axle;\n    }\n}",
+  "human_feedback": "",
+  "validation_info": {
+    "success": true,
+    "validation_count": 7,
+    "success_rate": 0.14285714285714285,
+    "final_errors": []
+  },
+  "workflow_metadata": {
+    "iterations_used": 7,
+    "max_iterations": 10,
+    "human_review_enabled": true,
+    "human_response": "approve",
+    "workflow_status": "human_approved"
+  },
+  "created_at": "2025-09-07T02:55:29.601487",
+  "embedding_text": "Task: Create a basic SysML part definition for a simple Door with a handle | Parts: part def Door { part handle { part def Engine { part def Transmission { part def Clutch { part def Differential { part def Wheel { part def Axle { part def Vehicle {"
+}
