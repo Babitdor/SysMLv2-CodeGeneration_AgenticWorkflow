@@ -52,20 +52,12 @@ class QueryAgent:
     def process(self, state: WorkflowState) -> WorkflowState:
         """Process the original query into a structured prompt"""
         try:
-            # logger.info("Query Agent: Processing user query")
-
-            # self.prompt = ChatPromptTemplate.from_messages(
-            #     [("system", self.system_prompt), ("human", "Input: {query}")]
-            # )
-            # chain = self.prompt | self.llm | StrOutputParser()
-            # response = chain.invoke({"query": state.original_query})
-            # state.processed_query = response
-            # logger.info("Query Agent: Successfully processed query")
+            logger.info("Query Agent: Processing user query")
             agent = create_agent(
+                name=self.name,
                 model=self.llm,
                 tools=[],
                 system_prompt=self.system_prompt,
-                name="Query-Agent",
             )
 
             response = agent.invoke(
