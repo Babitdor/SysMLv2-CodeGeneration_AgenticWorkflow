@@ -1,4 +1,6 @@
 from langchain.tools import BaseTool
+from typing import Optional, Type
+from pydantic import Field
 
 
 class SysMLExampleSearchTool(BaseTool):
@@ -33,16 +35,25 @@ class SysMLExampleSearchTool(BaseTool):
     Use this tool BEFORE generating SysML when you need domain grounding or examples.
     """
 
-    def __init__(self, rag_knowledge_base):
-        super().__init__()
-        self.rag_pipeline = rag_knowledge_base
+    # Use Field to properly declare the attribute in Pydantic model
+    rag_knowledge_base: Optional[object] = Field(
+        default=None, description="RAG knowledge base instance for querying"
+    )
+
+    def __init__(self, rag_knowledge_base=None, **kwargs):
+        """Initialize with RAG knowledge base"""
+        super().__init__(rag_knowledge_base=rag_knowledge_base, **kwargs)
 
     def _run(self, query: str) -> str:
+        """Synchronous run method"""
+        if not self.rag_knowledge_base:
+            return "RAG knowledge base not available."
+
         try:
-            code_results = self.rag_pipeline.query(
+            code_results = self.rag_knowledge_base.query(  # type: ignore
                 query, n_results=3, filter_doc_type="code"
             )
-            doc_results = self.rag_pipeline.query(
+            doc_results = self.rag_knowledge_base.query(  # type: ignore
                 query, n_results=2, filter_doc_type="documentation"
             )
 
@@ -70,4 +81,5 @@ class SysMLExampleSearchTool(BaseTool):
             return f"RAG enhancement error: {str(e)}"
 
     async def _arun(self, query: str) -> str:
+        """Async run method"""
         return self._run(query)
