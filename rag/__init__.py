@@ -1,7 +1,5 @@
-from .KnowledgeBase import KnowledgeBase
-from .RAG import SysMLRetriever
+from .Injestion import SysMLRAGPipeline
 
 __all__ = [
-    "SysMLRetriever",
-    "KnowledgeBase",
+    "SysMLRAGPipeline",
 ]
