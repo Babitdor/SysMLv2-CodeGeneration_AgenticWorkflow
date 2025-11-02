@@ -1,25 +1,24 @@
 from typing import Dict, Any, Optional, List, Union
-
 from langchain_ollama import ChatOllama
+from langchain_openai import ChatOpenAI
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_chroma import Chroma
 from langchain_classic.schema import Document
-
-from agents.ValidatorAgent import ValidatorAgent
 from agents.QueryAgent import QueryAgent
+from agents.TemplateAgent import TemplateAgent
 from agents.HumanApprovalAgent import HumanApprovalAgent
 from agents.SysMLAgent import SysMLAgent
-from agents.CodeCorrectionAgent import CodeCorrectionAgent
 from langgraph.graph import StateGraph, END
 from states.WorkflowState import WorkflowState
-
+from states.ValidationState import ValidationStatus
 from rag.Injestion import SysMLRAGPipeline
-
 import logging
 import os
 from datetime import datetime
 import json
-import chromadb
+from dotenv import load_dotenv
+
+load_dotenv()
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -29,11 +28,12 @@ logger = logging.getLogger(__name__)
 class SysMLWorkflow:
     """
     Enhanced SysML workflow with RAG and vector database integration.
+    Simplified workflow with SysMLAgent handling validation and corrections via tools.
     """
 
     def __init__(
         self,
-        config_path: str = "./prompt.yaml",
+        config_path: str = "./prompt/prompt.yaml",
         model_name: str = "SysML-V2-llama3.1:latest",
         temperature: float = 0.15,
         enable_rag: bool = True,
@@ -45,13 +45,18 @@ class SysMLWorkflow:
         enable_approved_solutions_db: bool = True,
         approved_solutions_persist_dir: str = "./rag/approved_solutions",
     ):
-        """Initialize the SysML Workflow with fixed approved solutions DB"""
+        """Initialize the SysML Workflow with simplified architecture"""
         # Initialize LLM
         self.llm = ChatOllama(
-            model=model_name,
-            temperature=temperature,
-            num_ctx=context_length
+            model=model_name, temperature=temperature, num_ctx=context_length
         )
+
+        ### PLUG in with OpenAI API or OPENROUTER
+        # self.llm = ChatOpenAI(
+        #     api_key=os.getenv("OPENROUTER_API_KEY"),  # type: ignore
+        #     base_url="https://openrouter.ai/api/v1",
+        #     model="qwen/qwen3-coder:free",
+        # )
 
         # RAG Configuration
         self.enable_rag = enable_rag
@@ -84,14 +89,13 @@ class SysMLWorkflow:
         else:
             logger.info("RAG system disabled")
 
-        # FIXED: Approved Solutions Database with proper ChromaDB setup
+        # Approved Solutions Database
         self.enable_approved_solutions = enable_approved_solutions_db
         self.approved_solutions_db = None
         self.approved_solutions_persist_dir = os.path.abspath(
             approved_solutions_persist_dir
         )
         self.embeddings = None
-        self.chroma_client = None  # Store client reference
 
         if enable_approved_solutions_db:
             try:
@@ -129,15 +133,18 @@ class SysMLWorkflow:
         # Initialize agents
         logger.info("Initializing agents...")
         self.query_agent = QueryAgent(self.llm, config_path=config_path)
+        self.template_agent = TemplateAgent(
+            llm=ChatOllama(
+                model="QwenCoder2.5-7B-SysML",
+                temperature=0,
+                num_ctx=16000,
+            ),
+            config_path=config_path,
+        )
         self.sysml_agent = SysMLAgent(
             llm=self.llm,
             config_path=config_path,
-            knowledge_base=self.approved_solutions_db,
-        )
-        self.validator_agent = ValidatorAgent()
-        self.correction_agent = CodeCorrectionAgent(
-            self.llm,
-            error_solutions_db=self.rag_pipeline,
+            rag_knowledge_base=self.rag_pipeline if self.rag_pipeline else None,
         )
         self.approval_agent = HumanApprovalAgent()
         logger.info("✅ All agents initialized successfully")
@@ -146,37 +153,29 @@ class SysMLWorkflow:
         self.workflow = self._build_workflow()
 
     def _build_workflow(self) -> StateGraph:
-        """Build the enhanced LangGraph workflow"""
+        """Build the simplified LangGraph workflow"""
         workflow = StateGraph(WorkflowState)
 
-        # Add nodes
+        # Add nodes - simplified architecture
         workflow.add_node("query_processing", self._query_processing_node)
-        workflow.add_node("rag_enhancement", self._rag_enhancement_node)
+        workflow.add_node("template_generation", self._template_generation_node)
         workflow.add_node("code_generation", self._code_generation_node)
-        workflow.add_node("validation", self._validation_node)
-        workflow.add_node("error_correction", self._error_correction_node)
         workflow.add_node("human_approval", self._human_approval_node)
         workflow.add_node("update_knowledge_base", self._update_knowledge_base)
 
         # Define workflow edges
         workflow.set_entry_point("query_processing")
 
+        workflow.add_edge("query_processing", "template_generation")
+
+        workflow.add_edge("template_generation", "code_generation")
+
+        # SysMLAgent now handles validation and corrections internally
         workflow.add_conditional_edges(
-            "query_processing",
-            self._route_after_query_processing,
-            {"rag": "rag_enhancement", "generate": "code_generation"},
+            "code_generation",
+            self._route_after_code_generation,
+            {"approve": "human_approval", "retry": "code_generation", "end": END},
         )
-
-        workflow.add_edge("rag_enhancement", "code_generation")
-        workflow.add_edge("code_generation", "validation")
-
-        workflow.add_conditional_edges(
-            "validation",
-            self._route_after_validation,
-            {"approve": "human_approval", "correct": "error_correction", "end": END},
-        )
-
-        workflow.add_edge("error_correction", "code_generation")
 
         workflow.add_conditional_edges(
             "human_approval",
@@ -211,163 +210,48 @@ class SysMLWorkflow:
     def _query_processing_node(
         self, state: Union[WorkflowState, Dict[str, Any]]
     ) -> Dict[str, Any]:
-        """Enhanced query processing node with approved solutions search"""
+        """Query processing node - analyzes and structures the user query"""
         workflow_state = self._ensure_workflow_state(state)
-
-        if self.enable_approved_solutions and self.approved_solutions_db:
-            try:
-                similar_docs = self.approved_solutions_db.similarity_search(
-                    workflow_state.original_query, k=3
-                )
-
-                if similar_docs:
-                    logger.info(f"Found {len(similar_docs)} similar approved solutions")
-                    context = "\n\nSimilar approved solutions:\n"
-                    for i, doc in enumerate(similar_docs, 1):
-                        preview = doc.page_content[:150].replace("\n", " ")
-                        context += f"{i}. {preview}...\n"
-                    workflow_state.processed_query += context
-
-            except Exception as e:
-                logger.warning(f"Error searching approved solutions: {e}")
+        logger.info("🔍 Processing user query...")
 
         updated_state = self.query_agent.process(workflow_state)
+        logger.info("✅ Query processed and structured")
+
         return updated_state.to_dict()
 
-    def _rag_enhancement_node(
+    def _template_generation_node(
         self, state: Union[WorkflowState, Dict[str, Any]]
     ) -> Dict[str, Any]:
-        """RAG enhancement node using SysMLRAGPipeline"""
+        """Template generation node - creates initial SysML template"""
         workflow_state = self._ensure_workflow_state(state)
 
-        if self.enable_rag and self.rag_pipeline:
-            try:
-                logger.info("🔍 Enhancing query with RAG context...")
+        logger.info(
+            f"📝 Generating SysML template (iteration {workflow_state.iteration})"
+        )
 
-                code_results = self.rag_pipeline.query(
-                    workflow_state.original_query, n_results=3, filter_doc_type="code"
-                )
+        updated_state = self.template_agent.generate_template_code(workflow_state)
 
-                doc_results = self.rag_pipeline.query(
-                    workflow_state.original_query,
-                    n_results=2,
-                    filter_doc_type="documentation",
-                )
+        if updated_state.code:
+            logger.info("✅ Template generated successfully")
+        else:
+            logger.warning("⚠️ Template generation produced no code")
 
-                if code_results or doc_results:
-                    rag_context = "\n\n=== RELEVANT SYSML PATTERNS AND EXAMPLES ===\n"
-
-                    if code_results:
-                        rag_context += "\nCode Examples:\n"
-                        for i, result in enumerate(code_results, 1):
-                            content = result["content"][:300]
-                            source = result["metadata"].get("source", "unknown")
-                            rag_context += f"\n{i}. From {source}\n{content}...\n"
-
-                    if doc_results:
-                        rag_context += "\nRelevant Documentation:\n"
-                        for i, result in enumerate(doc_results, 1):
-                            content = result["content"][:250]
-                            rag_context += f"\n{i}. {content}...\n"
-
-                    workflow_state.processed_query += rag_context
-                    logger.info(
-                        f"✅ Added context from {len(code_results) + len(doc_results)} documents"
-                    )
-
-            except Exception as e:
-                logger.error(f"❌ RAG enhancement error: {e}")
-
-        return workflow_state.to_dict()
+        return updated_state.to_dict()
 
     def _code_generation_node(
         self, state: Union[WorkflowState, Dict[str, Any]]
     ) -> Dict[str, Any]:
-        """Enhanced code generation with RAG error context"""
-        workflow_state = self._ensure_workflow_state(state)
-
-        if workflow_state.iteration > 1 and self.enable_rag and self.rag_pipeline:
-            try:
-                logger.info("🔍 Searching for error-specific solutions...")
-
-                error_docs = self.rag_pipeline.query(
-                    f"error fix solution {workflow_state.error}",
-                    n_results=3,
-                    filter_doc_type="error_doc",
-                )
-
-                if error_docs:
-                    error_context = "\n\n=== ERROR-SPECIFIC SOLUTIONS ===\n"
-                    for i, result in enumerate(error_docs, 1):
-                        content = result["content"][:300]
-                        error_code = result["metadata"].get("error_code", "N/A")
-                        error_context += f"\n{i}. [Error: {error_code}]\n{content}...\n"
-
-                    workflow_state.processed_query += error_context
-                    logger.info(f"✅ Added {len(error_docs)} error solutions from RAG")
-
-            except Exception as e:
-                logger.warning(f"⚠️ Error context enhancement failed: {e}")
-
-        updated_state = self.sysml_agent.generate_code(workflow_state)
-        return updated_state.to_dict()
-
-    def _validation_node(
-        self, state: Union[WorkflowState, Dict[str, Any]]
-    ) -> Dict[str, Any]:
-        """Validation node using SysMLValidatorTool"""
-        workflow_state = self._ensure_workflow_state(state)
-
-        logger.info(f"🔍 Validating SysML code (iteration {workflow_state.iteration})")
-        updated_state = self.validator_agent.validate(workflow_state)
-
-        if updated_state.is_valid.value == "valid":
-            logger.info("✅ Validation passed!")
-        else:
-            error_count = (
-                len(updated_state.get_latest_validation().errors)  # type: ignore
-                if updated_state.get_latest_validation()
-                else 0
-            )
-            logger.warning(f"❌ Validation failed with {error_count} error(s)")
-
-        return updated_state.to_dict()
-
-    def _error_correction_node(
-        self, state: Union[WorkflowState, Dict[str, Any]]
-    ) -> Dict[str, Any]:
-        """Enhanced error correction with RAG"""
+        """
+        Code generation node - SysML Agent refines template
+        SysMLAgent has access to RAG tool for enhancement and validation tools
+        """
         workflow_state = self._ensure_workflow_state(state)
 
         logger.info(
-            f"🔧 Analyzing errors for correction (iteration {workflow_state.iteration})"
+            f"🔧 Refining SysML code with SysMLAgent (iteration {workflow_state.iteration})"
         )
 
-        updated_state = self.correction_agent.analyze_errors(workflow_state)
-
-        if self.enable_rag and self.rag_pipeline and updated_state.error:
-            try:
-                error_solutions = self.rag_pipeline.query(
-                    f"solution fix {updated_state.error}",
-                    n_results=3,
-                    filter_doc_type="error_doc",
-                )
-
-                if error_solutions:
-                    additional_guidance = (
-                        "\n\n=== ADDITIONAL ERROR SOLUTIONS FROM KNOWLEDGE BASE ===\n"
-                    )
-                    for i, result in enumerate(error_solutions, 1):
-                        content = result["content"][:250]
-                        error_code = result["metadata"].get("error_code", "Unknown")
-                        additional_guidance += (
-                            f"\n{i}. [Error {error_code}] {content}...\n"
-                        )
-
-                    updated_state.processed_query += additional_guidance
-
-            except Exception as e:
-                logger.warning(f"⚠️ RAG error correction enhancement failed: {e}")
+        updated_state = self.sysml_agent.generate_code(workflow_state)
 
         return updated_state.to_dict()
 
@@ -379,27 +263,43 @@ class SysMLWorkflow:
         updated_state = self.approval_agent.request_approval(workflow_state)
         return updated_state.to_dict()
 
-    def _route_after_query_processing(
+    def _route_after_code_generation(
         self, state: Union[WorkflowState, Dict[str, Any]]
     ) -> str:
-        """Route after query processing"""
-        return "rag" if self.enable_rag else "generate"
-
-    def _route_after_validation(
-        self, state: Union[WorkflowState, Dict[str, Any]]
-    ) -> str:
-        """Route after validation based on results"""
+        """
+        Route after code generation.
+        Since SysMLAgent handles validation internally, we check if code is valid
+        and route accordingly.
+        """
         workflow_state = self._ensure_workflow_state(state)
 
-        latest_validation = workflow_state.get_latest_validation()
-        if latest_validation and latest_validation.success:
-            logger.info("✅ Routing to human approval")
+        is_code_valid = False
+
+        if workflow_state.is_valid == ValidationStatus.VALID:
+            is_code_valid = True
+            logger.info("✅ Code validation status: VALID")
+
+        else:
+            latest_validation = workflow_state.get_latest_validation()
+
+            if latest_validation and latest_validation.success:
+                logger.info("✅ Code validated successfully via validation history")
+            else:
+                logger.warning(
+                    f"⚠️ Code validation status: {workflow_state.is_valid}, "
+                    f"Validation history: {len(workflow_state.validation_history)} entries"
+                )
+
+        if is_code_valid:
+            logger.info("✅ Code validated successfully, routing to human approval")
             return "approve"
         elif workflow_state.iteration < workflow_state.max_iterations:
             logger.info(
-                f"🔄 Routing to error correction (iteration {workflow_state.iteration}/{workflow_state.max_iterations})"
+                f"🔄 Validation failed, retrying from template generation "
+                f"(iteration {workflow_state.iteration}/{workflow_state.max_iterations})"
             )
-            return "correct"
+            workflow_state.iteration += 1
+            return "retry"
         else:
             logger.warning(
                 f"⚠️ Max iterations reached ({workflow_state.max_iterations}), ending workflow"
@@ -418,6 +318,7 @@ class SysMLWorkflow:
             and workflow_state.iteration < workflow_state.max_iterations
         ):
             logger.info("🔄 Code rejected/feedback provided, retrying generation")
+            workflow_state.iteration += 1
             return "retry"
         else:
             logger.info("ℹ️ Ending workflow after approval phase")
@@ -426,7 +327,7 @@ class SysMLWorkflow:
     def _update_knowledge_base(
         self, state: Union[WorkflowState, Dict[str, Any]]
     ) -> Dict[str, Any]:
-        """FIXED: Update approved solutions knowledge base"""
+        """Update approved solutions knowledge base"""
         workflow_state = self._ensure_workflow_state(state)
 
         try:
@@ -452,31 +353,22 @@ class SysMLWorkflow:
                     "doc_type": "approved_solution",
                 }
 
-                # Create embedding text (combine task and code for better search)
+                # Create embedding text
                 embedding_text = (
                     f"Task: {workflow_state.original_query}\n\n"
                     f"SysML Code:\n{workflow_state.code}"
                 )
 
-                # FIXED: Create document with proper structure
+                # Create document
                 doc = Document(page_content=embedding_text, metadata=metadata)
 
-                # FIXED: Add to vector store with explicit ID
+                # Add to vector store
                 logger.info(f"Adding document with ID: {solution_id}")
                 self.approved_solutions_db.add_documents(
                     documents=[doc], ids=[solution_id]
                 )
 
-                # FIXED: Force persistence (ChromaDB should auto-persist, but ensure it)
-                # Note: Newer ChromaDB versions don't have persist(), it auto-persists
-                try:
-                    if hasattr(self.approved_solutions_db, "persist"):
-                        self.approved_solutions_db.persist()  # type: ignore
-                except AttributeError:
-                    # Auto-persisting version, no action needed
-                    pass
-
-                # Also save as JSON backup
+                # Save JSON backup
                 full_entry = {
                     "id": solution_id,
                     "task": workflow_state.original_query,
@@ -490,7 +382,6 @@ class SysMLWorkflow:
                     "created_at": metadata["created_at"],
                 }
 
-                # Save JSON backup
                 full_entry_dir = os.path.join(
                     os.path.abspath(self.approved_solutions_persist_dir), "full_entries"
                 )
@@ -500,25 +391,11 @@ class SysMLWorkflow:
                 with open(json_path, "w", encoding="utf-8") as f:
                     json.dump(full_entry, f, indent=2, ensure_ascii=False)
 
-                # FIXED: Verify the entry was added
+                # Verify the entry was added
                 stats = self.get_approved_db_statistics()
                 logger.info(
                     f"✅ Successfully stored approved solution! (Total: {stats.get('total_entries', 0)})"
                 )
-
-                # Test retrieval
-                try:
-                    search_results = self.approved_solutions_db.similarity_search(
-                        workflow_state.original_query, k=1
-                    )
-                    if search_results:
-                        logger.info(f"✅ Verified: Solution is retrievable")
-                    else:
-                        logger.warning(
-                            "⚠️ Warning: Could not retrieve the just-added solution"
-                        )
-                except Exception as e:
-                    logger.warning(f"⚠️ Verification search failed: {e}")
 
         except Exception as e:
             logger.error(f"❌ Error in knowledge base update: {str(e)}")
@@ -542,7 +419,7 @@ class SysMLWorkflow:
         )
 
         try:
-            result_dict = self.workflow.invoke(initial_state.to_dict())  # type: ignore
+            result_dict = self.workflow.invoke(initial_state.to_dict(), {"recursion_limit": 100})  # type: ignore
             result_state = WorkflowState.from_state(result_dict)
 
             final_result = result_state.to_dict()
@@ -600,18 +477,13 @@ class SysMLWorkflow:
             return {"enabled": True, "error": str(e)}
 
     def get_approved_db_statistics(self) -> Dict[str, Any]:
-        """FIXED: Get approved solutions database statistics"""
+        """Get approved solutions database statistics"""
         if not self.enable_approved_solutions or not self.approved_solutions_db:
             return {"enabled": False}
 
         try:
-            # FIXED: Get count directly from the ChromaDB collection
             collection = self.approved_solutions_db._collection
-
-            # Get the actual count
             count = collection.count()
-
-            # Get sample data for verification
             sample_data = collection.get(limit=5)
             sample_ids = sample_data.get("ids", [])
 
@@ -619,7 +491,7 @@ class SysMLWorkflow:
                 "enabled": True,
                 "total_entries": count,
                 "collection_name": "approved_solutions",
-                "sample_ids": sample_ids[:3],  # Show first 3 IDs
+                "sample_ids": sample_ids[:3],
                 "persist_directory": self.approved_solutions_persist_dir,
             }
 
@@ -635,8 +507,6 @@ class SysMLWorkflow:
         try:
             logger.info("🧹 Starting cleanup...")
 
-            # FIXED: No need to explicitly persist with newer ChromaDB
-            # It auto-persists, but we can verify the data exists
             if self.enable_approved_solutions and self.approved_solutions_db:
                 try:
                     stats = self.get_approved_db_statistics()
@@ -654,58 +524,29 @@ class SysMLWorkflow:
         except Exception as e:
             logger.warning(f"⚠️ Error during cleanup: {e}")
 
-    def reset_approved_solutions_db(self):
-        """Reset the approved solutions database (for testing)"""
-        if not self.chroma_client:
-            logger.error("❌ ChromaDB client not initialized")
-            return
-
-        try:
-            # Delete the collection
-            try:
-                self.chroma_client.delete_collection("approved_solutions")
-                logger.info("✅ Deleted old collection")
-            except Exception:
-                logger.info("ℹ️ No existing collection to delete")
-
-            # Recreate the collection
-            self.approved_solutions_db = Chroma(
-                client=self.chroma_client,
-                collection_name="approved_solutions",
-                embedding_function=self.embeddings,
-            )
-
-            logger.info("✅ Approved solutions database reset successfully")
-
-        except Exception as e:
-            logger.error(f"❌ Error resetting approved solutions database: {e}")
-            import traceback
-
-            traceback.print_exc()
-
 
 def test_enhanced_workflow():
     """Test the enhanced workflow"""
     print("=" * 80)
-    print("ENHANCED SYSML WORKFLOW TEST")
+    print("SIMPLIFIED SYSML WORKFLOW TEST")
     print("=" * 80)
 
     workflow = None
     try:
-        print("\n1. Initializing Enhanced SysML Workflow...")
+        print("\n1. Initializing Simplified SysML Workflow...")
 
         workflow = SysMLWorkflow(
             enable_rag=True,
-            model_name="gpt-oss:20b-cloud",
+            model_name="qwen3-coder:480b-cloud",
             temperature=0.15,
             config_path="agents/prompt/prompt.yaml",
             rag_persist_directory="./rag/chroma_db",
             rag_collection_name="sysml_v2_knowledge",
-            enable_approved_solutions_db=False,
+            enable_approved_solutions_db=True,
             approved_solutions_persist_dir="./rag/approved_solutions",
-            context_length=16000
+            context_length=16000,
         )
-        print("✅ Enhanced workflow initialized successfully")
+        print("✅ Simplified workflow initialized successfully")
 
         # Display system status
         print("\n2. System Status:")
@@ -729,7 +570,7 @@ def test_enhanced_workflow():
                 print(f"   - Sample IDs: {approved_stats['sample_ids']}")
 
         # Test query
-        test_query = "Create a SysML package for a simple drone"
+        test_query = "Create a SysML package for a Vehicle"
         print(f"\n3. Running workflow with test query:")
         print(f"   '{test_query}'")
 
@@ -754,14 +595,6 @@ def test_enhanced_workflow():
         else:
             print(f"\n4. ❌ Workflow failed: {result.get('error', 'Unknown error')}")
 
-        # Check updated statistics
-        if workflow.enable_approved_solutions:
-            print("\n6. Updated Approved Solutions Database:")
-            updated_stats = workflow.get_approved_db_statistics()
-            print(f"   - Total entries: {updated_stats.get('total_entries', 0)}")
-            if updated_stats.get("sample_ids"):
-                print(f"   - Sample IDs: {updated_stats['sample_ids']}")
-
     except Exception as e:
         print(f"\n❌ Test failed with exception: {e}")
         import traceback
@@ -769,7 +602,7 @@ def test_enhanced_workflow():
         traceback.print_exc()
 
     finally:
-        print("\n7. Cleanup:")
+        print("\n6. Cleanup:")
         if workflow:
             workflow.cleanup()
         print("   ✅ Resources cleaned up successfully")

@@ -5,7 +5,7 @@ from langchain.tools import BaseTool
 class SysMLValidatorTool(BaseTool):
     """LangChain tool for validating SysML v2 code"""
 
-    name: str = "SysML-Validator-tool"
+    name: str = "SysML-validator-tool"
     description: str = """
         Validates SysML v2 code syntax and returns detailed error information.
         Input should be a string containing valid SysML v2 code.
