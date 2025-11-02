@@ -18,12 +18,6 @@ class ErrorInfo(BaseModel):
     name: str = Field(..., description="Error name/type")
     message: str = Field(..., description="Error message")
     traceback: List[str] = Field(default_factory=list, description="Error traceback")
-    line_number: Optional[int] = Field(
-        None, description="Line number where error occurred"
-    )
-    column_number: Optional[int] = Field(
-        None, description="Column number where error occurred"
-    )
 
 
 class ValidationResult(BaseModel):
@@ -36,9 +30,9 @@ class ValidationResult(BaseModel):
     warnings: List[str] = Field(default_factory=list, description="List of warnings")
     output: str = Field(default="", description="Cleaned output from validation")
     raw_output: str = Field(default="", description="Raw output from validation")
-    execution_time: Optional[float] = Field(
-        None, description="Execution time in seconds"
-    )
+    # execution_time: Optional[float] = Field(
+    #     None, description="Execution time in seconds"
+    # )
 
     @model_validator(mode="after")
     def success_must_match_errors(self):

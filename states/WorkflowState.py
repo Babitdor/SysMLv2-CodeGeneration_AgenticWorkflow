@@ -1,6 +1,7 @@
 from typing import Dict, List, Any, Optional, Union
 from pydantic import BaseModel, Field, field_validator
 from .ValidationState import ValidationStatus, ValidationResult
+# from .SysMLResponse import SysMLResponse
 
 
 class WorkflowState(BaseModel):
@@ -15,7 +16,8 @@ class WorkflowState(BaseModel):
     code: str = Field(default="", description="The SysML code content")
     error: str = Field(default="", description="Latest error message")
     is_valid: ValidationStatus = Field(
-        default=ValidationStatus.PENDING, description="Validation status"
+        default=ValidationStatus.PENDING,
+        description="Whether the code passed validation",
     )
     iteration: int = Field(default=1, ge=1, description="Current iteration number")
     validation_history: List[ValidationResult] = Field(
@@ -28,6 +30,9 @@ class WorkflowState(BaseModel):
         default="", description="Approval status of code (pending, approved, rejected)"
     )
     max_iterations: int = 5
+    # metadata: Optional[SysMLResponse] = Field(
+    #     default=None, description="Structured metadata from code generation"
+    # )
 
     @field_validator("code")
     @classmethod
