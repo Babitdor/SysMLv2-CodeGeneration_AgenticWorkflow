@@ -1,6 +1,4 @@
 from typing import Dict, Any, Optional, List, Union
-from langchain_ollama import ChatOllama
-from langchain_openai import ChatOpenAI
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_chroma import Chroma
 from langchain_classic.schema import Document
@@ -33,8 +31,12 @@ class SysMLWorkflow:
 
     def __init__(
         self,
-        config_path: str = "./prompt/prompt.yaml",
-        model_name: str = "SysML-V2-llama3.1:latest",
+        agents_prompt: str = "./prompt/prompt.yaml",
+        model_name: str = "qwen3:1.7b",
+        common_llm: Optional[Union[str, Dict, Any]] = None,
+        sysml_agent_llm: Optional[Union[str, Any]] = None,
+        query_agent_llm: Optional[Union[str, Any]] = None,
+        template_agent_llm: Optional[Union[str, Any]] = None,
         temperature: float = 0.15,
         enable_rag: bool = True,
         context_length: int = 16000,
@@ -47,16 +49,12 @@ class SysMLWorkflow:
     ):
         """Initialize the SysML Workflow with simplified architecture"""
         # Initialize LLM
-        self.llm = ChatOllama(
-            model=model_name, temperature=temperature, num_ctx=context_length
-        )
+        self.temperature = temperature
+        self.context_length = context_length
 
-        ### PLUG in with OpenAI API or OPENROUTER
-        # self.llm = ChatOpenAI(
-        #     api_key=os.getenv("OPENROUTER_API_KEY"),  # type: ignore
-        #     base_url="https://openrouter.ai/api/v1",
-        #     model="qwen/qwen3-coder:free",
-        # )
+        self.common_llm_instance = (
+            self._resolve_llm(common_llm, model_name) if common_llm else None
+        )
 
         # RAG Configuration
         self.enable_rag = enable_rag
@@ -132,18 +130,17 @@ class SysMLWorkflow:
 
         # Initialize agents
         logger.info("Initializing agents...")
-        self.query_agent = QueryAgent(self.llm, config_path=config_path)
+        self.query_agent = QueryAgent(
+            llm=self._get_agent_llm(query_agent_llm, model_name),
+            config_path=agents_prompt,
+        )
         self.template_agent = TemplateAgent(
-            llm=ChatOllama(
-                model="QwenCoder2.5-7B-SysML",
-                temperature=0,
-                num_ctx=16000,
-            ),
-            config_path=config_path,
+            llm=self._get_agent_llm(template_agent_llm, model_name),
+            config_path=agents_prompt,
         )
         self.sysml_agent = SysMLAgent(
-            llm=self.llm,
-            config_path=config_path,
+            llm=self._get_agent_llm(sysml_agent_llm, model_name),
+            config_path=agents_prompt,
             rag_knowledge_base=self.rag_pipeline if self.rag_pipeline else None,
         )
         self.approval_agent = HumanApprovalAgent()
@@ -151,6 +148,100 @@ class SysMLWorkflow:
 
         # Build the workflow graph
         self.workflow = self._build_workflow()
+
+    def _get_agent_llm(
+        self, agent_llm: Optional[Union[str, Dict, Any]], default_model: str
+    ):
+        """Get LLM for an agent with fallback logic"""
+        if agent_llm is not None:
+            # Agent has specific LLM
+            return self._resolve_llm(agent_llm, default_model)
+        elif self.common_llm_instance is not None:
+            # Use common LLM
+            return self.common_llm_instance
+        else:
+            # Use default
+            return self._resolve_llm(None, default_model)
+
+    def _resolve_llm(self, provider: Optional[Union[str, Any]], default: str):
+        """
+        provider can be:
+        - None  -> use default Ollama model
+        - string model name ONLY -> assume local Ollama model
+        - dict describing provider ex:
+            {"provider": "openai", "model": "gpt-4o-mini", "temperature": 0.3}
+            {"provider": "openrouter", "model": "qwen/qwen2-72b", "temperature": 0.2}
+            {"provider": "anthropic", "model": "claude-sonnet-4-5-20250929", "temperature": 0.1, "max_tokens": 8192}
+            {"provider": "ollama", "model": "llama3.1:8b", "base_url": "http://localhost:11434", "temperature": 0.2, "num_ctx": 8192}
+        - OR already initialized LLM object -> return as is
+        """
+        # already instantiated
+        if hasattr(provider, "invoke"):
+            return provider
+
+        # default means ollama local
+        if provider is None:
+            from langchain_ollama import ChatOllama
+
+            return ChatOllama(
+                model=default, temperature=self.temperature, num_ctx=self.context_length
+            )
+
+        # provider is a string → ollama local
+        if isinstance(provider, str):
+            from langchain_ollama import ChatOllama
+
+            return ChatOllama(
+                model=provider,
+                temperature=self.temperature,
+                num_ctx=self.context_length,
+            )
+
+        # dict mode
+        p = provider.get("provider")
+        m = provider.get("model")
+
+        if p == "openai":
+            from langchain_openai import ChatOpenAI
+
+            return ChatOpenAI(
+                api_key=os.getenv("OPENAI_API_KEY"),  # type: ignore
+                model=m,
+                temperature=provider.get("temperature", self.temperature),
+            )
+
+        if p == "openrouter":
+            from langchain_openai import ChatOpenAI
+
+            return ChatOpenAI(
+                api_key=os.getenv("OPENROUTER_API_KEY"),  # type: ignore
+                base_url="https://openrouter.ai/api/v1",
+                model=m,
+                temperature=provider.get("temperature", self.temperature),
+            )
+
+        if p == "anthropic":
+            from langchain_anthropic import ChatAnthropic
+
+            return ChatAnthropic(
+                model_name=m,
+                api_key=os.getenv("ANTHROPIC_API_KEY"),  # type: ignore
+                timeout=provider.get("timeout", 30),
+                temperature=provider.get("temperature", self.temperature),
+                max_tokens_to_sample=provider.get("max_tokens", 4096),
+                stop=None,
+            )
+
+        if p == "ollama":
+            from langchain_ollama import ChatOllama
+
+            return ChatOllama(
+                model=m,
+                temperature=provider.get("temperature", self.temperature),
+                num_ctx=provider.get("num_ctx", self.context_length),
+            )
+
+        raise ValueError(f"Unknown provider type: {provider}")
 
     def _build_workflow(self) -> StateGraph:
         """Build the simplified LangGraph workflow"""
@@ -523,90 +614,3 @@ class SysMLWorkflow:
 
         except Exception as e:
             logger.warning(f"⚠️ Error during cleanup: {e}")
-
-
-def test_enhanced_workflow():
-    """Test the enhanced workflow"""
-    print("=" * 80)
-    print("SIMPLIFIED SYSML WORKFLOW TEST")
-    print("=" * 80)
-
-    workflow = None
-    try:
-        print("\n1. Initializing Simplified SysML Workflow...")
-
-        workflow = SysMLWorkflow(
-            enable_rag=True,
-            model_name="qwen3-coder:480b-cloud",
-            temperature=0.15,
-            config_path="agents/prompt/prompt.yaml",
-            rag_persist_directory="./rag/chroma_db",
-            rag_collection_name="sysml_v2_knowledge",
-            enable_approved_solutions_db=True,
-            approved_solutions_persist_dir="./rag/approved_solutions",
-            context_length=16000,
-        )
-        print("✅ Simplified workflow initialized successfully")
-
-        # Display system status
-        print("\n2. System Status:")
-        print(
-            f"   RAG System: {'✅ Enabled' if workflow.enable_rag else '❌ Disabled'}"
-        )
-        print(
-            f"   Approved Solutions DB: {'✅ Enabled' if workflow.enable_approved_solutions else '❌ Disabled'}"
-        )
-
-        if workflow.enable_rag:
-            rag_stats = workflow.get_rag_statistics()
-            print(f"\n   RAG Pipeline Statistics:")
-            print(f"   - Total chunks: {rag_stats.get('total_chunks', 0)}")
-
-        if workflow.enable_approved_solutions:
-            approved_stats = workflow.get_approved_db_statistics()
-            print(f"\n   Approved Solutions Database:")
-            print(f"   - Total entries: {approved_stats.get('total_entries', 0)}")
-            if approved_stats.get("sample_ids"):
-                print(f"   - Sample IDs: {approved_stats['sample_ids']}")
-
-        # Test query
-        test_query = "Create a SysML package for a Vehicle"
-        print(f"\n3. Running workflow with test query:")
-        print(f"   '{test_query}'")
-
-        result = workflow.run(test_query, max_iterations=5)
-
-        if result.get("success"):
-            print("\n4. Workflow Results:")
-            print(f"   Status: ✅ Success")
-            print(f"   Iterations: {result.get('iteration', 0)}")
-            print(f"   Approval Status: {result.get('approval_status', 'unknown')}")
-
-            if result.get("code"):
-                print(f"   Final Code Length: {len(result['code'])} characters")
-                print("\n5. Generated Code Preview:")
-                print("-" * 50)
-                code_lines = result["code"].split("\n")[:15]
-                for line in code_lines:
-                    print(f"   {line}")
-                if len(result["code"].split("\n")) > 15:
-                    print("   ... (truncated)")
-                print("-" * 50)
-        else:
-            print(f"\n4. ❌ Workflow failed: {result.get('error', 'Unknown error')}")
-
-    except Exception as e:
-        print(f"\n❌ Test failed with exception: {e}")
-        import traceback
-
-        traceback.print_exc()
-
-    finally:
-        print("\n6. Cleanup:")
-        if workflow:
-            workflow.cleanup()
-        print("   ✅ Resources cleaned up successfully")
-
-
-if __name__ == "__main__":
-    test_enhanced_workflow()
