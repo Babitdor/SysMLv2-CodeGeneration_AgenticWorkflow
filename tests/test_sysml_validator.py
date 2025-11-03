@@ -1,4 +1,9 @@
 import unittest
+
+import sys, os
+
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from tools.sysml_parser.LoggingParsers.SysMLv2LoggingParser import SysMLv2LoggingParser
 
 class TestSysMLValidator(unittest.TestCase):

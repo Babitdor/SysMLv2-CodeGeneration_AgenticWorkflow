@@ -1,0 +1,24 @@
+{
+  "test_prompts": [
+    "Create a SysML v2 model of a car",
+    "Write a Python script that scrapes weather data from a website",
+    "Explain quantum entanglement to a 10-year-old",
+    "Generate a SQL query to find the top 5 customers by purchase amount",
+    "Create a React component for a todo list with add and delete functionality",
+    "Write a haiku about artificial intelligence",
+    "Debug this JavaScript code that's supposed to reverse a string",
+    "Explain the differences between REST and GraphQL APIs",
+    "Create a regex pattern to validate email addresses",
+    "Write a cover letter for a software engineering position",
+    "Summarize the key principles of object-oriented programming",
+    "Generate a CSS animation for a loading spinner",
+    "Explain how blockchain technology works",
+    "Create a Python function to calculate the Fibonacci sequence",
+    "Write a product description for noise-canceling headphones",
+    "Design a database schema for a blog application",
+    "Explain the bias-variance tradeoff in machine learning",
+    "Create a bash script to automate file backups",
+    "Write a persuasive essay outline about renewable energy",
+    "Generate test cases for a login authentication system"
+  ]
+}
