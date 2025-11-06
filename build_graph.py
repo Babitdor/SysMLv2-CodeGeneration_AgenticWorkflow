@@ -224,7 +224,7 @@ class SysMLWorkflow:
             from langchain_anthropic import ChatAnthropic
 
             return ChatAnthropic(
-                model_name=m,
+                model_name=m, # type: ignore
                 api_key=os.getenv("ANTHROPIC_API_KEY"),  # type: ignore
                 timeout=provider.get("timeout", 30),
                 temperature=provider.get("temperature", self.temperature),

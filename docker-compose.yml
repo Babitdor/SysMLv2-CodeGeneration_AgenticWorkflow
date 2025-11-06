@@ -1,0 +1,11 @@
+services:
+  sysml_agent_system:
+    build: .
+    container_name: sysml-agents
+    command: streamlit run run_workflow.py
+    volumes:
+      - .:/app
+    ports:
+      - "8501:8501"
+    environment:
+      - OLLAMA_HOST=http://host.docker.internal:11434
