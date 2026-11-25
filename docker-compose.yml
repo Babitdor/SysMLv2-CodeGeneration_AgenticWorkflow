@@ -1,11 +1,132 @@
+# Development stack: the source tree is bind-mounted, uvicorn reloads on save and
+# the ports are published. docker-compose.prod.yml overlays real TLS, gunicorn
+# workers and a database that is not reachable from the host.
 services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: sysml
+      POSTGRES_PASSWORD: sysml
+      POSTGRES_DB: sysml
+    # Published so "pytest" on the host can reach the same database the app uses.
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sysml -d sysml"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  sysml-kernel:
+    build: ./microservices/sysml-kernel
+    container_name: sysml-kernel
+    restart: unless-stopped
+    environment:
+      - HOST=0.0.0.0
+      - PORT=8888
+      - KERNEL_TIMEOUT=${KERNEL_TIMEOUT:-120}
+    ports:
+      - "8888:8888"
+    # POST-only service, so probe the listening socket instead of an HTTP route.
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; socket.create_connection(('127.0.0.1', 8888), 2).close()"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
   sysml_agent_system:
     build: .
     container_name: sysml-agents
-    command: streamlit run run_workflow.py
+    command: uvicorn webapp.server:app --host 0.0.0.0 --port 8000 --reload
+    restart: unless-stopped
+    depends_on:
+      sysml-kernel:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     volumes:
       - .:/app
+      # The deep agent's backend is the container filesystem under /workspace;
+      # a named volume keeps generated models across container recreation.
+      - agent_workspace:/workspace
+      # Playbooks are reference data: mount them read-only so neither write_file
+      # nor an unrestricted shell command can alter them at runtime.
+      - ./agents/skills:/app/agents/skills:ro
+      # The source mount above hides the bundle the image built with node, so a
+      # fresh clone answered 503 "UI not built" despite the Dockerfile. An
+      # anonymous volume is seeded from the image, and a new one is used every
+      # time the container is recreated — so this never serves a stale bundle.
+      - /app/webapp/static/ui
     ports:
-      - "8501:8501"
+      - "8000:8000"
+    # Optional so a fresh clone runs on the defaults below. .env supplies the
+    # documented settings (provider, model, limits); the explicit environment
+    # entries win over it, which is what keeps COOKIE_SECURE=0 in development.
+    env_file:
+      - path: .env
+        required: false
     environment:
+      # .env is written for the production overlay, so the two values that must
+      # differ in development are pinned here: SYSML_SMOKE=1 would answer every
+      # turn with a canned stream, and SYSML_TRUST_PROXY=1 would believe a
+      # client-supplied X-Forwarded-For from anything on the published port.
+      - SYSML_SMOKE=0
+      - SYSML_TRUST_PROXY=0
       - OLLAMA_HOST=http://host.docker.internal:11434
+      - SYSML_KERNEL_SERVICE_URL=http://sysml-kernel:8888
+      - DATABASE_URL=postgresql://sysml:sysml@postgres:5432/sysml
+      - REDIS_URL=redis://redis:6379/0
+      # Plain HTTP in development: a Secure cookie would be dropped by the browser.
+      - SYSML_COOKIE_SECURE=0
+      - SYSML_ENABLE_RAG=${SYSML_ENABLE_RAG:-1}
+      - SYSML_MAX_CONCURRENCY=${SYSML_MAX_CONCURRENCY:-4}
+      - SYSML_WORKERS=${SYSML_WORKERS:-1}
+    # Docker Desktop provides host.docker.internal; Linux needs this mapping.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  # The frontend as its own process: Vite with HMR, proxying /api to the app.
+  # Production does not use it — there the bundle is baked into the Python image
+  # by the `ui` stage of the Dockerfile and served from / — so this is the editing
+  # loop only: http://localhost:5173.
+  frontend:
+    build:
+      context: ./frontend
+      target: dev
+    restart: unless-stopped
+    depends_on:
+      - sysml_agent_system
+    environment:
+      - VITE_PROXY_TARGET=http://sysml_agent_system:8000
+      # A bind mount on Windows does not reliably deliver inotify events, and
+      # without this HMR silently never fires. Costs a little CPU, dev only.
+      - VITE_USE_POLLING=1
+    volumes:
+      - ./frontend:/app
+      # Keep the container's own node_modules: the host copy has Windows native
+      # esbuild/rollup binaries that cannot load in a Linux image.
+      - frontend_node_modules:/app/node_modules
+    ports:
+      - "5173:5173"
+
+volumes:
+  agent_workspace:
+  frontend_node_modules:
+  pgdata:

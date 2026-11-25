@@ -103,7 +103,7 @@ class StreamlitSysMLApp:
             unsafe_allow_html=True,
         )
         st.markdown(
-            "**Flow:** Query Agent → Template Agent → SysML Agent → Human Approval"
+            "**Flow:** Query Agent → SysML Agent → Human Approval"
         )
         st.markdown("---")
 
@@ -279,7 +279,7 @@ class StreamlitSysMLApp:
 
                 st.success("✅ Workflow initialized successfully!")
                 st.info(
-                    "Flow: Query Agent → Template Agent → SysML Agent (with RAG tool)"
+                    "Flow: Query Agent → SysML Agent (with RAG tool)"
                 )
 
         except Exception as e:
@@ -345,8 +345,7 @@ class StreamlitSysMLApp:
                 
                 **New Architecture:**
                 - Query Agent → Analyzes user intent
-                - Template Agent → Creates SysML structure
-                - SysML Agent → Refines & validates (uses RAG as tool)
+                - SysML Agent → Generates, validates & enhances (uses RAG as tool)
                 - Human Approval → Quality assurance
                 """
                 )
@@ -807,12 +806,11 @@ class StreamlitSysMLApp:
         
         ### ✨ Architecture
         
-        **Query Agent → Template Agent → SysML Agent → Human Approval**
+        **Query Agent → SysML Agent → Human Approval**
         
         1. **Query Agent**: Analyzes and structures user requirements
-        2. **Template Agent**: Creates initial SysML template structure
-        3. **SysML Agent**: Refines, validates, and enhances code using RAG tool
-        4. **Human Approval**: Quality assurance and feedback loop
+        2. **SysML Agent**: Generates, validates, and enhances code using RAG tool
+        3. **Human Approval**: Quality assurance and feedback loop
         
         ### 🔧 Key Features
         
@@ -820,7 +818,7 @@ class StreamlitSysMLApp:
         - **🔍 RAG as Tool**: SysML Agent can query knowledge base when needed
         - **💾 Vector Database**: Stores approved solutions for learning
         - **✅ Automated Validation**: Built-in syntax and semantic checking
-        - **🔄 Error Correction**: Automatic retry with template regeneration
+        - **🔄 Error Correction**: Automatic retry with code regeneration
         - **👥 Human-in-the-Loop**: Manual review and approval process
         - **📊 Analytics**: Track performance and system insights
         

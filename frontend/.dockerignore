@@ -1,0 +1,4 @@
+# The host install is platform-specific and is replaced by `npm ci` in the image.
+node_modules
+dist
+*.log

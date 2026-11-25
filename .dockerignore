@@ -1,0 +1,16 @@
+# Build context hygiene: the source tree holds model weights, a device snapshot,
+# the git history and node_modules — none of which belong in the image.
+.git
+.github
+.nova
+.pytest_cache
+node_modules
+frontend/node_modules
+webapp/static/ui
+rag/chroma_db
+rag/approved_solutions
+**/__pycache__
+*.pyc
+.env
+*.zip
+state

@@ -1,9 +1,9 @@
 from .LoggingParser import LoggingParser
-from .SysMLv2.SysMLv2Lexer import SysMLv2Lexer  
-from .SysMLv2.SysMLv2Parser import SysMLv2Parser
+from ..NewGrammar.SysMLv2Lexer import SysMLv2Lexer
+from ..NewGrammar.SysMLv2Parser import SysMLv2Parser
 
 class SysMLv2LoggingParser(LoggingParser):
-    """Parser for validating SysML v2 specifically"""
+    """Parser for validating SysML v2 specifically (new grammar: OMG 2026-03 + patches)"""
     
     def __init__(self, input_string: str):
         """Initialize parser with input validation"""

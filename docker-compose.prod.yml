@@ -1,0 +1,125 @@
+# Production overlay: docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+#
+# Differences from the dev file, all of them deliberate:
+#   * no source bind mount — the image carries the built UI and the code
+#   * gunicorn with SYSML_WORKERS processes instead of uvicorn --reload
+#   * Postgres and Redis are not published; only nginx is
+#   * the kernel is internal-only (it executes model code, it does not answer HTTP)
+#   * TLS terminates in nginx, so the session cookie can be Secure
+services:
+  postgres:
+    restart: unless-stopped
+    ports: !reset []
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-sysml}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-sysml}
+    volumes: !reset
+      - pgdata:/var/lib/postgresql/data
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+
+  redis:
+    restart: unless-stopped
+    ports: !reset []
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes: !reset
+      - redisdata:/data
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+
+  sysml-kernel:
+    restart: unless-stopped
+    # No published port: the app reaches it over the compose network only.
+    ports: !reset []
+    # It executes model-authored code; give it no capabilities and no way to
+    # gain any through a setuid binary.
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 2g
+
+  sysml_agent_system:
+    build: .
+    restart: unless-stopped
+    # Scalable: a fixed container name and a published port both block
+    # "--scale", so the overlay drops them and nginx fronts the replicas.
+    container_name: !reset
+    ports: !reset []
+    command: !reset []
+    env_file: .env
+    environment:
+      - SYSML_ENV=prod
+      - SYSML_COOKIE_SECURE=${SYSML_COOKIE_SECURE:-1}
+      - SYSML_TRUST_PROXY=1
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-sysml}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-sysml}
+      - REDIS_URL=redis://redis:6379/0
+      - SYSML_KERNEL_SERVICE_URL=http://sysml-kernel:8888
+    volumes: !reset
+      - agent_workspace:/workspace
+      - ./agents/skills:/app/agents/skills:ro
+      # server.py writes both stores under its own rag/ directory, and the image
+      # build excludes them. Without these two the approved-solution history and
+      # the vector index live in the container's writable layer and are lost on
+      # the next deploy. rag/documents is the source corpus: it stays in the image.
+      - chroma_data:/app/rag/chroma_db
+      - approved_solutions:/app/rag/approved_solutions
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      sysml-kernel:
+        condition: service_healthy
+    # Long turns must finish before the container is killed.
+    stop_grace_period: 40s
+    healthcheck:
+      start_period: 90s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    deploy:
+      resources:
+        limits:
+          cpus: "4.0"
+          memory: 6g
+
+  # The Vite dev server is not part of a deployment. A profile keeps it out of
+  # a plain `up` with this overlay — which is what CI and a release run — while
+  # `docker compose up -d frontend` against the base file still selects it.
+  frontend:
+    profiles: ["frontend"]
+
+  web:
+    image: nginx:1.29-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./nginx/certs:/etc/nginx/certs:ro
+    depends_on:
+      sysml_agent_system:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "--no-check-certificate", "https://127.0.0.1/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+volumes:
+  redisdata:
+  chroma_data:
+  approved_solutions:

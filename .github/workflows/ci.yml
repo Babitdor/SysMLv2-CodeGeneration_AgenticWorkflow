@@ -1,0 +1,140 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    # Nightly load run against the compose stack (see the "load" job).
+    - cron: "0 3 * * *"
+
+jobs:
+  python:
+    name: python (ruff + pytest)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: sysml
+          POSTGRES_PASSWORD: sysml
+          POSTGRES_DB: sysml
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U sysml -d sysml"
+          --health-interval 10s --health-timeout 5s --health-retries 10
+      redis:
+        image: redis:7
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s --health-timeout 5s --health-retries 10
+    env:
+      TEST_DATABASE_URL: postgresql://sysml:sysml@127.0.0.1:5432/sysml
+      TEST_REDIS_URL: redis://127.0.0.1:6379/15
+      SYSML_COOKIE_SECURE: "0"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: install
+        run: pip install -r requirements.txt -r requirements-dev.txt ruff
+      - name: lint
+        run: ruff check .
+      - name: test
+        run: python -m pytest -q
+
+  ui:
+    name: ui (typecheck + lint + build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm run build
+
+  compose:
+    name: compose (build + smoke)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: self-signed certificate
+        run: |
+          mkdir -p nginx/certs
+          openssl req -x509 -nodes -newkey rsa:2048 -days 1 \
+            -keyout nginx/certs/privkey.pem -out nginx/certs/fullchain.pem \
+            -subj "/CN=localhost"
+      - name: .env
+        run: |
+          sed -e 's/^POSTGRES_PASSWORD=.*/POSTGRES_PASSWORD=ci-password/' \
+              -e 's/^SYSML_SMOKE=.*/SYSML_SMOKE=1/' .env.example > .env
+          grep -q SYSML_SMOKE .env || echo "SYSML_SMOKE=1" >> .env
+      - name: config is valid
+        run: docker compose -f docker-compose.yml -f docker-compose.prod.yml config -q
+      - name: up
+        run: |
+          docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build --wait
+          docker compose ps
+      - name: smoke
+        run: |
+          pip install httpx==0.28.1
+          python scripts/smoke.py --base-url https://localhost -k --expect-fresh
+      - name: nginx has no 5xx
+        run: docker compose logs web | grep -E " (50[0-9]) " && exit 1 || true
+      - name: logs
+        if: failure()
+        run: docker compose -f docker-compose.yml -f docker-compose.prod.yml logs --tail 200
+      - name: down
+        if: always()
+        run: docker compose -f docker-compose.yml -f docker-compose.prod.yml down -v
+
+  load:
+    name: load (nightly)
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: self-signed certificate
+        run: |
+          mkdir -p nginx/certs
+          openssl req -x509 -nodes -newkey rsa:2048 -days 1 \
+            -keyout nginx/certs/privkey.pem -out nginx/certs/fullchain.pem \
+            -subj "/CN=localhost"
+      - name: .env
+        run: |
+          sed -e 's/^POSTGRES_PASSWORD=.*/POSTGRES_PASSWORD=ci-password/' \
+              -e 's/^SYSML_SMOKE=.*/SYSML_SMOKE=1/' .env.example > .env
+          grep -q SYSML_SMOKE .env || echo "SYSML_SMOKE=1" >> .env
+      - name: load-test nginx config
+        # Widens the per-address sign-up budget for this run only; see
+        # docker-compose.loadtest.yml for why fifty same-IP users need it.
+        run: sed 's#rate=10r/m#rate=600r/m#' nginx/nginx.conf > nginx/nginx.loadtest.conf
+      - name: up
+        run: docker compose -f docker-compose.yml -f docker-compose.prod.yml -f docker-compose.loadtest.yml up -d --build --wait
+      - name: load
+        run: |
+          pip install httpx==0.28.1
+          python scripts/load_test.py --base-url https://localhost -k --users 50 --duration 120
+      - name: logs
+        if: always()
+        run: docker compose -f docker-compose.yml -f docker-compose.prod.yml -f docker-compose.loadtest.yml logs web --tail 100
+      - name: down
+        if: always()
+        run: docker compose -f docker-compose.yml -f docker-compose.prod.yml -f docker-compose.loadtest.yml down -v

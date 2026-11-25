@@ -1,0 +1,7 @@
+# Anything that runs inside a Linux container has to keep LF endings. A CRLF
+# shebang makes the kernel hunt for an interpreter called "/bin/sh\r" and the
+# container dies with "no such file or directory" before Python ever starts.
+# A Windows clone defaults to core.autocrlf=true, which is how that happens.
+*.sh        text eol=lf
+Dockerfile  text eol=lf
+*.conf      text eol=lf

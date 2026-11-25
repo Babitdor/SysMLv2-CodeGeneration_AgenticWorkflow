@@ -3,7 +3,6 @@ from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_chroma import Chroma
 from langchain_classic.schema import Document
 from agents.QueryAgent import QueryAgent
-from agents.TemplateAgent import TemplateAgent
 from agents.HumanApprovalAgent import HumanApprovalAgent
 from agents.SysMLAgent import SysMLAgent
 from langgraph.graph import StateGraph, END
@@ -31,12 +30,11 @@ class SysMLWorkflow:
 
     def __init__(
         self,
-        agents_prompt: str = "./prompt/prompt.yaml",
+        agents_prompt: str = "agents/prompt/SysML.j2",
         model_name: str = "qwen3:1.7b",
         common_llm: Optional[Union[str, Dict, Any]] = None,
         sysml_agent_llm: Optional[Union[str, Any]] = None,
         query_agent_llm: Optional[Union[str, Any]] = None,
-        template_agent_llm: Optional[Union[str, Any]] = None,
         temperature: float = 0.15,
         enable_rag: bool = True,
         context_length: int = 16000,
@@ -46,6 +44,9 @@ class SysMLWorkflow:
         github_token: Optional[str] = None,
         enable_approved_solutions_db: bool = True,
         approved_solutions_persist_dir: str = "./rag/approved_solutions",
+        rag_pipeline: Optional[Any] = None,
+        approved_solutions_db: Optional[Any] = None,
+        embeddings: Optional[Any] = None,
     ):
         """Initialize the SysML Workflow with simplified architecture"""
         # Initialize LLM
@@ -56,11 +57,24 @@ class SysMLWorkflow:
             self._resolve_llm(common_llm, model_name) if common_llm else None
         )
 
+        # The embedding model and the two Chroma stores cost ~1 GB, so a caller
+        # that builds several workflows (one per account backend) passes one
+        # stack in: then this workflow owns none of it and cleanup() must not
+        # close it.
+        self._owns_stores = not (
+            rag_pipeline is not None
+            or approved_solutions_db is not None
+            or embeddings is not None
+        )
+
         # RAG Configuration
         self.enable_rag = enable_rag
         self.rag_pipeline = None
 
-        if enable_rag:
+        if not self._owns_stores:
+            self.enable_rag = rag_pipeline is not None
+            self.rag_pipeline = rag_pipeline
+        elif enable_rag:
             try:
                 logger.info("Initializing SysMLRAGPipeline...")
                 self.rag_pipeline = SysMLRAGPipeline(
@@ -95,7 +109,11 @@ class SysMLWorkflow:
         )
         self.embeddings = None
 
-        if enable_approved_solutions_db:
+        if not self._owns_stores:
+            self.enable_approved_solutions = approved_solutions_db is not None
+            self.approved_solutions_db = approved_solutions_db
+            self.embeddings = embeddings
+        elif enable_approved_solutions_db:
             try:
                 logger.info("Initializing approved solutions database...")
 
@@ -132,10 +150,6 @@ class SysMLWorkflow:
         logger.info("Initializing agents...")
         self.query_agent = QueryAgent(
             llm=self._get_agent_llm(query_agent_llm, model_name),
-            config_path=agents_prompt,
-        )
-        self.template_agent = TemplateAgent(
-            llm=self._get_agent_llm(template_agent_llm, model_name),
             config_path=agents_prompt,
         )
         self.sysml_agent = SysMLAgent(
@@ -204,11 +218,31 @@ class SysMLWorkflow:
         if p == "openai":
             from langchain_openai import ChatOpenAI
 
-            return ChatOpenAI(
-                api_key=os.getenv("OPENAI_API_KEY"),  # type: ignore
-                model=m,
-                temperature=provider.get("temperature", self.temperature),
+            options: Dict[str, Any] = {
+                "model": m,
+                "api_key": provider.get("api_key") or os.getenv("OPENAI_API_KEY"),
+                "temperature": provider.get("temperature", self.temperature),
+            }
+
+            # Endpoint first, then the optional knobs (dict wins, env is the fallback).
+            base_url = provider.get("base_url") or os.getenv("OPENAI_BASE_URL")
+            if base_url:
+                options["base_url"] = base_url
+
+            optional = (
+                "organization",
+                "reasoning_effort",
+                "max_completion_tokens",
+                "timeout",
+                "default_headers",
+                "extra_body",
+                "stream_usage",
             )
+            for key in optional:
+                if provider.get(key) is not None:
+                    options[key] = provider[key]
+
+            return ChatOpenAI(**options)  # type: ignore[arg-type]
 
         if p == "openrouter":
             from langchain_openai import ChatOpenAI
@@ -249,7 +283,6 @@ class SysMLWorkflow:
 
         # Add nodes - simplified architecture
         workflow.add_node("query_processing", self._query_processing_node)
-        workflow.add_node("template_generation", self._template_generation_node)
         workflow.add_node("code_generation", self._code_generation_node)
         workflow.add_node("human_approval", self._human_approval_node)
         workflow.add_node("update_knowledge_base", self._update_knowledge_base)
@@ -257,9 +290,7 @@ class SysMLWorkflow:
         # Define workflow edges
         workflow.set_entry_point("query_processing")
 
-        workflow.add_edge("query_processing", "template_generation")
-
-        workflow.add_edge("template_generation", "code_generation")
+        workflow.add_edge("query_processing", "code_generation")
 
         # SysMLAgent now handles validation and corrections internally
         workflow.add_conditional_edges(
@@ -307,25 +338,6 @@ class SysMLWorkflow:
 
         updated_state = self.query_agent.process(workflow_state)
         logger.info("✅ Query processed and structured")
-
-        return updated_state.to_dict()
-
-    def _template_generation_node(
-        self, state: Union[WorkflowState, Dict[str, Any]]
-    ) -> Dict[str, Any]:
-        """Template generation node - creates initial SysML template"""
-        workflow_state = self._ensure_workflow_state(state)
-
-        logger.info(
-            f"📝 Generating SysML template (iteration {workflow_state.iteration})"
-        )
-
-        updated_state = self.template_agent.generate_template_code(workflow_state)
-
-        if updated_state.code:
-            logger.info("✅ Template generated successfully")
-        else:
-            logger.warning("⚠️ Template generation produced no code")
 
         return updated_state.to_dict()
 
@@ -595,6 +607,10 @@ class SysMLWorkflow:
 
     def cleanup(self):
         """Clean up all resources"""
+        if not self._owns_stores:
+            # The stores belong to the caller (the webapp shares one stack across
+            # its per-account workflows), so there is nothing here to close.
+            return
         try:
             logger.info("🧹 Starting cleanup...")
 

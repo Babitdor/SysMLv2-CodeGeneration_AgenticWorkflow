@@ -1,0 +1,29 @@
+# ── sysml-kernel pinned conda environment ──────────────────────────────
+#
+# Solving conda dependencies at build time made every Dockerfile edit
+# re-run a multi-minute solve + ~1 GB download. This file pins the
+# environment; upgrades become a reviewed diff here, not a live solve.
+#
+# Contents are exactly what server.py needs:
+#   python 3.12           — runtime for server.py (stdlib only)
+#   jupyter-sysml-kernel  — the SysML v2 kernel (kernel_name='sysml');
+#                           pulls conda-forge openjdk + graphviz libs in
+#                           as transitive deps, which is why there is NO
+#                           apt/Temurin Java install in the Dockerfile
+#                           (the old image shipped two Java runtimes)
+#   graphviz 2.x          — %viz diagram rendering backend
+#   openjdk 25            — explicitly pinned to the version verified
+#                           working with kernel 0.59.0 (2026-09-03);
+#                           keeps transitive bumps from silently
+#                           changing the JVM
+# NOTE: jupyter_console deliberately NOT included — server.py only uses
+# jupyter_client (start_new_kernel); the interactive frontend plus its
+# prompt_toolkit/pygments deps were dead weight.
+name: base
+channels:
+  - conda-forge
+dependencies:
+  - python=3.12
+  - jupyter-sysml-kernel=0.59.0
+  - graphviz=2.50
+  - openjdk=25

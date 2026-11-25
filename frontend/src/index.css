@@ -1,0 +1,82 @@
+@import "tailwindcss";
+
+@theme {
+  --color-bg: #0a0f14;
+  --color-bg-2: #0c131a;
+  --color-panel: #0f171f;
+  --color-ink: #dfe8ef;
+  --color-ink-dim: #8a9ca9;
+  --color-rule: rgba(223, 232, 239, 0.13);
+  --color-rule-soft: rgba(223, 232, 239, 0.07);
+  --color-accent: #ff7a29;
+  --color-ok: #5ad68d;
+  --color-bad: #ff5f57;
+  --color-warn: #e2b341;
+  --font-sans: "IBM Plex Sans", "Helvetica Neue", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  --font-serif: "Instrument Serif", Georgia, serif;
+}
+
+@layer base {
+  html, body, #root { height: 100%; }
+  body {
+    margin: 0;
+    background: var(--color-bg);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    font-size: 15px;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+  }
+  ::selection { background: rgba(255, 122, 41, 0.26); }
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: rgba(223, 232, 239, 0.14); border-radius: 999px; }
+  ::-webkit-scrollbar-thumb:hover { background: rgba(223, 232, 239, 0.24); }
+  :focus-visible { outline: 1px solid var(--color-accent); outline-offset: 2px; }
+}
+
+@layer components {
+  /* Blueprint grid: atmosphere without a flat fill. */
+  .blueprint {
+    background-image:
+      linear-gradient(var(--color-rule-soft) 1px, transparent 1px),
+      linear-gradient(90deg, var(--color-rule-soft) 1px, transparent 1px);
+    background-size: 72px 72px;
+    mask-image: radial-gradient(circle at 30% 0%, #000 0%, transparent 78%);
+  }
+  .label {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--color-ink-dim);
+  }
+  .rule-t { border-top: 1px solid var(--color-rule); }
+  .rule-b { border-bottom: 1px solid var(--color-rule); }
+  /* Code tokens: the palette the old chat page used, kept in one place. */
+  .tok-com { color: #6b7688; font-style: italic; }
+  .tok-str { color: #9ece6a; }
+  .tok-num { color: #ff9e64; }
+  .tok-key { color: #7aa2f7; font-weight: 600; }
+  /* Types and declared names: SysML reads as `part engine : Engine;`. */
+  .tok-type { color: #7dcfff; }
+  .md > :first-child { margin-top: 0; }
+  .md > :last-child { margin-bottom: 0; }
+}
+
+@keyframes rise { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+@keyframes slide-in { from { opacity: 0; transform: translateX(10px); } to { opacity: 1; transform: none; } }
+@keyframes caret { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
+
+.rise { animation: rise 260ms ease-out both; }
+.slide-in { animation: slide-in 280ms cubic-bezier(0.2, 0.7, 0.2, 1) both; }
+.caret { animation: caret 1s steps(2, start) infinite; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}

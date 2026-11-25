@@ -1,32 +1,134 @@
 from langchain_ollama import ChatOllama
 from langchain_core.output_parsers import PydanticOutputParser
-from langchain.agents import create_agent
+from deepagents import FilesystemPermission, create_deep_agent
+from langgraph.checkpoint.memory import InMemorySaver
+from deepagents.backends import (
+    CompositeBackend,
+    FilesystemBackend,
+    LocalShellBackend,
+)
+from langchain_core.messages import AIMessageChunk, ToolMessage
+import json
 import re
+import time
 import yaml
 import logging
 import os
 import sys
 import asyncio
 from dotenv import load_dotenv
-from typing import List, Optional
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
 from langchain.tools import BaseTool
 
 
 load_dotenv()
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from mcp_server import get_mcp_client
 from states.WorkflowState import WorkflowState
 from states.SysMLResponse import SysMLResponse
 from states.ValidationState import ValidationStatus, ValidationResult, ErrorInfo
 from tools.SysMLValidatorTool import sysml_validator_tool
-from tools.SysMLSyntaxTool import syntax_tool
-from tools.SysMLExampleSearchTool import SysMLExampleSearchTool
+
+try:
+    from tools.SysMLSyntaxTool import syntax_tool
+except ModuleNotFoundError as exc:
+    if exc.name != "tools.SysMLSyntaxTool":
+        raise
+    syntax_tool = None
+
+try:
+    from tools.SysMLExampleSearchTool import SysMLExampleSearchTool
+except ModuleNotFoundError as exc:
+    if exc.name != "tools.SysMLExampleSearchTool":
+        raise
+    SysMLExampleSearchTool = None
 
 
 # Configure logging
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
+
+
+# Tool-call tracing: a `tool` event names the call, what it asked for, and a
+# capped head of what came back. The cap keeps a chatty tool (a 50 KB read) from
+# flooding the transcript while `chars` still reports the full length, so a
+# client can say "showing 1200 of 50213".
+TRACE_CHARS = 1200
+# A summary is one line in a dense list, so it is its own, tighter bound.
+SUMMARY_CHARS = 120
+
+# The argument that says what a call is about, per tool; anything else is
+# summarised by its argument names.
+_SUMMARY_ARGS = {
+    "read_file": "file_path",
+    "write_file": "file_path",
+    "grep": "pattern",
+    "glob": "pattern",
+    "ls": "path",
+    "shell": "command",
+}
+
+
+def _preview(text: str) -> Tuple[str, bool, int]:
+    """(capped head, was it cut, full length) under SYSML_TRACE_CHARS."""
+    try:
+        limit = int(os.environ.get("SYSML_TRACE_CHARS", TRACE_CHARS))
+    except ValueError:
+        limit = TRACE_CHARS
+    limit = max(0, limit)
+    full = text or ""
+    return full[:limit], len(full) > limit, len(full)
+
+
+def _text_of(content: Any) -> str:
+    """A ToolMessage's content as text: it is a str, or a list of blocks."""
+    if isinstance(content, str):
+        return content
+    if not isinstance(content, (list, tuple)):
+        return "" if content is None else str(content)
+    parts: List[str] = []
+    for block in content:
+        if isinstance(block, str):
+            parts.append(block)
+        elif isinstance(block, dict):
+            text = block.get("text")
+            if not isinstance(text, str):
+                text = block.get("content")
+            if isinstance(text, str):
+                parts.append(text)
+    return "".join(parts)
+
+
+def _tool_summary(name: Optional[str], args: str) -> str:
+    """One line naming what a call is about; malformed or partial JSON is fine.
+
+    Arguments arrive as fragments, so the first summary is usually computed from
+    text that does not parse yet: the wanted key is read straight out of the
+    fragment and the unknown case degrades to the argument names seen so far.
+    """
+    wanted = _SUMMARY_ARGS.get((name or "").lower())
+    text = args or ""
+    try:
+        parsed = json.loads(text)
+    except (TypeError, ValueError):
+        parsed = None
+    if isinstance(parsed, dict):
+        value = parsed.get(wanted) if wanted else None
+        if isinstance(value, str) and value.strip():
+            return value.strip()[:SUMMARY_CHARS]
+        if not wanted:
+            # A tool outside the map: the first argument carrying text is what
+            # the call is about; its keys alone read as noise in the row.
+            for candidate in parsed.values():
+                if isinstance(candidate, str) and candidate.strip():
+                    return candidate.strip()[:SUMMARY_CHARS]
+        return ", ".join(sorted(str(key) for key in parsed))[:SUMMARY_CHARS]
+    if wanted:
+        match = re.search(r'"%s"\s*:\s*"([^"]*)' % re.escape(wanted), text)
+        if match:
+            return match.group(1).strip()
+    return ", ".join(dict.fromkeys(re.findall(r'"([A-Za-z0-9_]+)"\s*:', text)))
 
 
 class SysMLAgent:
@@ -35,7 +137,7 @@ class SysMLAgent:
     def __init__(
         self,
         llm,
-        config_path: str = "agents/prompt/prompt.yaml",
+        config_path: str = "agents/prompt/SysML.j2",
         rag_knowledge_base=None,
         tools: Optional[List[BaseTool]] = None,
     ) -> None:
@@ -55,8 +157,102 @@ class SysMLAgent:
 
         CRITICAL: After using tools and generating code, your final response MUST be valid JSON matching the schema above.
         Include the complete SysML code in the "code" field, validation status in "validated", and any tool usage in the respective fields.
+
+        WORKSPACE:
+        - Your shell and filesystem are the Docker container you run in. Every deliverable goes
+          under /workspace: models in /workspace/current/, other artifacts in /workspace/artifacts/.
+        - Files the user uploads arrive in /workspace/uploads/. List them with ls("/workspace/uploads"),
+          read them with read_file before modeling, and never assume their content.
+        - Save the model with write_file(file_path="/workspace/current/<name>.sysml"), then validate
+          that saved file with SysML-validator-tool(file_path="..."). Inline code validation is a
+          fallback for short probes only.
+        - Files under /workspace persist across container restarts. Do not write outside /workspace
+          except read-only /skills/.
+
+        VALIDATION RULES:
+        - Validate the saved file via SysML-validator-tool(file_path=...); use code=... only when no file exists.
+        - Diagram playbooks live under /skills/<diagram>/SKILL.md; read them with read_file(limit=1000).
+        - /skills/ is read-only. Do not edit SKILL.md or LEARNED.md; report new fix patterns in the JSON.
+        - There is no example-search or syntax-reference tool; skills and /skills/sysml-v2-reference replace them.
+        - Set "validated" to true only when the final tool report says "✅ Code is valid!".
+        - Local fallback checks and the model's own claims do not establish compiler acceptance.
         """
         self.tools = self._initialize_tools(tools)
+
+        # agents/skills/*/SKILL.md are the SysML v2 diagram playbooks. They are
+        # routed to a read-only backend so the skills middleware can list and
+        # load them, while every other path stays on the Docker sandbox.
+        skills_root = Path(__file__).resolve().parent / "skills"
+        self.skills_root = skills_root if any(skills_root.glob("*/SKILL.md")) else None
+        if self.skills_root is None:
+            logger.warning("⚠️ No SysML skills found under %s", skills_root)
+
+        # The deep agent executes inside Docker: this process already runs in the
+        # sysml-agents container, so LocalShellBackend gives the agent a real
+        # container filesystem and shell rooted at /workspace instead of the
+        # in-memory StateBackend. root_dir="/" keeps paths absolute so the
+        # validator can read /workspace/current/*.sysml, and virtual_mode blocks
+        # ".." escapes; it does not restrict shell commands, which stay inside
+        # the container.
+        # The agent's deliverables live in the workspace volume: current/ holds the
+        # SysML model files the validator reads back, artifacts/ holds everything
+        # else it produces.
+        workspace_root = Path(os.environ.get("SYSML_WORKSPACE_ROOT", "/workspace"))
+        for subdir in ("current", "artifacts", "uploads"):
+            try:
+                (workspace_root / subdir).mkdir(parents=True, exist_ok=True)
+            except OSError as exc:
+                logger.warning("⚠️ Cannot prepare %s: %s", workspace_root / subdir, exc)
+
+        sandbox = LocalShellBackend(
+            root_dir="/",
+            virtual_mode=True,
+            timeout=120,
+            inherit_env=True,
+        )
+        self.sandbox = sandbox
+
+        if self.skills_root is not None:
+            backend = CompositeBackend(
+                default=sandbox,
+                routes={
+                    "/skills/": FilesystemBackend(
+                        root_dir=str(skills_root), virtual_mode=True
+                    )
+                },
+            )
+            permissions = [
+                FilesystemPermission(
+                    operations=["write"], paths=["/skills/**"], mode="deny"
+                )
+            ]
+            skill_sources = ["/skills/"]
+        else:
+            backend = sandbox
+            permissions = None
+            skill_sources = None
+
+        # The validator reads saved models through the same backend, so attach it
+        # before the agent is built; without a sandbox only inline code validates.
+        for tool in self.tools:
+            if getattr(tool, "sandbox", None) is None and hasattr(tool, "sandbox"):
+                tool.sandbox = sandbox
+
+        # Build the deep agent once: planning/todo, delegation and the diagram
+        # skills ride along with the project tools. The checkpointer keeps each
+        # thread's messages (and the agent's own todos) so a follow-up request on
+        # the same thread_id continues the conversation instead of starting over.
+        self.checkpointer = InMemorySaver()
+        self.agent = create_deep_agent(
+            model=self.llm,
+            tools=self.tools,
+            system_prompt=self.system_prompt,
+            backend=backend,
+            skills=skill_sources,
+            permissions=permissions,
+            checkpointer=self.checkpointer,
+            name=self.name,
+        )
 
     def _initialize_tools(
         self, custom_tools: Optional[List[BaseTool]] = None
@@ -64,12 +260,13 @@ class SysMLAgent:
         """Initialize all tools for the agent"""
         tools_list = []
 
-        # Add standard tools
-        tools_list.append(syntax_tool)
+        # Add available standard tools.
+        if syntax_tool is not None:
+            tools_list.append(syntax_tool)
         tools_list.append(sysml_validator_tool)
 
         # Add example search tool if RAG knowledge base is available
-        if self.rag_knowledge_base:
+        if self.rag_knowledge_base and SysMLExampleSearchTool is not None:
             try:
                 sysml_kb_search_tool = SysMLExampleSearchTool(
                     rag_knowledge_base=self.rag_knowledge_base
@@ -132,40 +329,15 @@ class SysMLAgent:
         # Return as-is if no code blocks found
         return text.strip()
 
-    # def _get_knowledge_context(self, query: str) -> str:
-    #     """Retrieve relevant context from knowledge base"""
-    #     if not self.knowledge_base:
-    #         return "No knowledge base available."
-
-    #     try:
-    #         docs = self.knowledge_base.similarity_search(query, k=3)
-    #         context_entries = []
-    #         for doc in docs:
-    #             if hasattr(doc, "page_content"):
-    #                 # Handle Document objects
-    #                 context_entries.append(doc.page_content)
-    #             elif isinstance(doc, dict):
-    #                 # Handle dictionary results
-    #                 # Assuming the content is in a 'content' or 'text' field
-    #                 content = doc.get("content") or doc.get("text") or str(doc)
-    #                 context_entries.append(content)
-    #             else:
-    #                 # Handle any other format by converting to string
-    #                 context_entries.append(str(doc))
-
-    #         context = "\n\n".join(context_entries)
-    #         formatted_context = f"These are relevant approved solutions:\n\n{context}"
-    #         logger.info("Retrieved knowledge base context")
-    #         return formatted_context
-    #     except Exception as e:
-    #         logger.warning(f"Error retrieving knowledge context: {e}")
-    #         return "No relevant examples found in knowledge base."
-
     def _create_prompt_with_context(self, state: WorkflowState) -> str:
         """Create a comprehensive prompt including context from previous attempts."""
-        prompt_parts = [
-            f"This is the current SysML v2 code that is validated : {state.code}"
-        ]
+        prompt_parts = [f"Current SysML v2 code:\n{state.code}"]
+        latest_validation = state.get_latest_validation()
+        if latest_validation and not latest_validation.success:
+            prompt_parts.append(
+                f"Previous SysML-validator-tool report:\n{latest_validation.output}\n"
+                "Repair the reported errors before returning the complete model."
+            )
 
         # Add human feedback if provided
         if state.human_feedback:
@@ -195,13 +367,6 @@ class SysMLAgent:
                 f"SysML Agent: Generating SysML code (iteration {state.iteration})"
             )
 
-            agent = create_agent(
-                name=self.name,
-                model=self.llm,
-                tools=self.tools,
-                system_prompt=self.system_prompt,
-            )
-
             # Create contextual prompt for refinement on (reject and feedback)
             if state.approval_status and state.approval_status in [
                 "rejected",
@@ -209,12 +374,15 @@ class SysMLAgent:
             ]:
                 query = self._create_prompt_with_context(state)
 
+            elif state.code.strip():
+                query = self._create_prompt_with_context(state)
+
             else:
                 query = [
-                    f"Here is a SysML-v2 template code that needs to be validated: \n\n {state.code} "
+                    f"Create a SysML-v2 model with the following:\n\n Requirements: {state.processed_query}"
                 ]
 
-            response = agent.invoke(
+            response = self.agent.invoke(
                 {"messages": [{"role": "user", "content": query}]},
                 {"recursion_limit": 100},
             )
@@ -229,70 +397,35 @@ class SysMLAgent:
             else:
                 response = str(response)
 
-            # Try to parse structured response
-            try:
-                parsed_response = self.parser.parse(response)
+            state.code = self._final_code(response)
+            if not state.code.strip():
+                raise ValueError("LLM did not generate any code")
 
-                # Update state with parsed structured data
-                state.code = parsed_response.code
-
-                if parsed_response.validated:
-                    state.is_valid = ValidationStatus.VALID
-
-                    # Add successful validation to history
-                    validation_result = ValidationResult(
-                        success=True,
-                        errors=[],
-                        warnings=[],
-                        output="Code validated successfully by SysMLAgent",
-                        raw_output=response[:500],  # Truncate for storage
-                    )
-                    state.validation_history.append(validation_result)
-                    state.error = ""  # Clear any previous errors
-
-                    logger.info("✅ Successfully validated SysML code")
-
-                else:
-                    state.is_valid = ValidationStatus.INVALID
-
-                    # Add failed validation to history if there are validation issues
-                    validation_result = ValidationResult(
-                        success=False,
-                        errors=[
-                            ErrorInfo(
-                                name="ValidationError",
-                                message="Code validation failed",
-                                traceback=[],
-                            )
-                        ],
-                        warnings=[],
-                        output="Code validation failed by SysMLAgent",
-                        raw_output=response[:500],
-                    )
-                    state.validation_history.append(validation_result)
-
-                    logger.warning("⚠️ Code validation marked as failed")
-
-            except Exception as parse_error:
-                logger.warning(f"⚠️ Structured parsing failed: {parse_error}")
-                logger.info("📋 Falling back to legacy code extraction")
-
-                # Fallback to legacy extraction
-                sysml_code = self.extract_sysml_code(response)
-
-                if not sysml_code.strip():
-                    raise ValueError("LLM did not generate any code")
-
-                state.code = sysml_code
-                state.error = f"Note: Used fallback extraction. Parsing errors: {str(parse_error)}"
-                state.is_valid = ValidationStatus.PENDING
-
-                # Create minimal metadata
-                # state.metadata = SysMLResponse(
-                #     code=sysml_code,
-                #     validated=False,
-                #     syntax_checks_performed=[],
-                # )
+            # Validate the exact returned code; the model's "validated" field is
+            # informational only and cannot approve its own output.
+            verdict = sysml_validator_tool._run(code=state.code)
+            validation_succeeded = f"\n✅ Code is valid!" in f"\n{verdict}"
+            state.is_valid = (
+                ValidationStatus.VALID if validation_succeeded else ValidationStatus.INVALID
+            )
+            state.error = "" if validation_succeeded else verdict
+            state.validation_history.append(
+                ValidationResult(
+                    success=validation_succeeded,
+                    errors=(
+                        []
+                        if validation_succeeded
+                        else [ErrorInfo(name="ValidationError", message=verdict)]
+                    ),
+                    warnings=[],
+                    output=verdict,
+                    raw_output=verdict[:500],
+                )
+            )
+            if validation_succeeded:
+                logger.info("✅ SysML validator accepted the generated code")
+            else:
+                logger.warning("⚠️ SysML validation did not establish compiler acceptance")
 
             logger.info("SysML Agent: Successfully generated SysML code")
             return state
@@ -312,7 +445,153 @@ class SysMLAgent:
                 raw_output=str(e)[:500],
             )
             state.validation_history.append(validation_result)
+            state.is_valid = ValidationStatus.ERROR
+            state.error = error_msg
             return state
+
+    def stream_generation(self, query: str, thread_id: Optional[str] = None):
+        """Stream one generation run: token/tool deltas, then {"type":"generated"}.
+
+        No validation here — `stream_code` and the web pipeline own that, so a
+        repair loop can re-run generation without duplicate verdicts.
+        """
+        config: dict = {"recursion_limit": 100}
+        if thread_id:
+            config["configurable"] = {"thread_id": thread_id}
+
+        buffer: List[str] = []
+        announced = set()
+        # A tool call arrives as fragments: id and name on one chunk, the JSON
+        # arguments split across several. Records are keyed by the chunk index,
+        # because a later fragment usually carries no name, and are looked up by
+        # call id once the tool answers — so the same tool used twice stays two
+        # independent rows.
+        partials: Dict[Any, Dict[str, Any]] = {}
+        by_id: Dict[str, Dict[str, Any]] = {}
+
+        def merge(index: Any, fragment: Dict[str, Any]) -> Dict[str, Any]:
+            record = partials.get(index)
+            if record is None:
+                record = {
+                    "index": index,
+                    "id": "",
+                    "name": None,
+                    "args": "",
+                    "started": 0.0,
+                }
+                partials[index] = record
+            if fragment.get("id"):
+                record["id"] = fragment["id"]
+                by_id.setdefault(fragment["id"], record)
+            if fragment.get("name"):
+                record["name"] = fragment["name"]
+            record["args"] += fragment.get("args") or ""
+            return record
+
+        try:
+            for item in self.agent.stream(
+                {"messages": [{"role": "user", "content": query}]},
+                config=config,
+                stream_mode="messages",
+            ):
+                chunk = item[0] if isinstance(item, tuple) else item
+                if isinstance(chunk, AIMessageChunk):
+                    for call in chunk.tool_call_chunks or []:
+                        record = merge(call.get("index"), call)
+                        if record["id"] and record["id"] not in announced:
+                            announced.add(record["id"])
+                            record["started"] = time.monotonic()
+                            yield {
+                                "type": "tool",
+                                "name": record["name"] or "tool",
+                                "status": "start",
+                                "call_id": record["id"],
+                                "summary": _tool_summary(
+                                    record["name"], record["args"]
+                                ),
+                            }
+                    text = self._chunk_text(chunk)
+                    if text:
+                        buffer.append(text)
+                        yield {"type": "token", "text": text}
+                elif isinstance(chunk, ToolMessage):
+                    call_id = chunk.tool_call_id or ""
+                    record = by_id.pop(call_id, None)
+                    if record is not None:
+                        partials.pop(record["index"], None)
+                    name = (record["name"] if record else None) or chunk.name or "tool"
+                    args = record["args"] if record else ""
+                    output, truncated, chars = _preview(_text_of(chunk.content))
+                    yield {
+                        "type": "tool",
+                        "name": name,
+                        # Repeated from the start event: only now are the
+                        # arguments complete, so this is the summary worth
+                        # keeping on the finished row.
+                        "summary": _tool_summary(name, args),
+                        "status": (
+                            "failed"
+                            if getattr(chunk, "status", None) == "error"
+                            else "done"
+                        ),
+                        "call_id": call_id,
+                        "ms": (
+                            int((time.monotonic() - record["started"]) * 1000)
+                            if record and record["started"]
+                            else 0
+                        ),
+                        "chars": chars,
+                        "truncated": truncated,
+                        "args": args,
+                        "output": output,
+                    }
+        except Exception as e:
+            logger.error(f"SysML Agent streaming error: {e}")
+            yield {"type": "error", "detail": str(e)}
+            return
+
+        code = self._final_code("".join(buffer))
+        yield {"type": "generated", "code": code}
+
+    def stream_code(self, query: str, thread_id: Optional[str] = None):
+        """Stream generation followed by compiler validation with local fallback evidence."""
+        for event in self.stream_generation(query, thread_id):
+            if event["type"] == "error":
+                yield event
+                return
+            if event["type"] == "generated":
+                code = event["code"]
+                continue
+            yield event
+
+        yield {"type": "code", "code": code}
+
+        try:
+            verdict = sysml_validator_tool._run(code)
+        except Exception as e:
+            verdict = f"❌ Validator error: {e}"
+        yield {
+            "type": "validation",
+            "ok": bool(code.strip()) and f"\n✅ Code is valid!" in f"\n{verdict}",
+            "detail": verdict,
+        }
+
+    @staticmethod
+    def _chunk_text(chunk: AIMessageChunk) -> str:
+        """Token text from a chunk, tolerating provider-specific shapes."""
+        text = getattr(chunk, "text", "")
+        if isinstance(text, str):
+            return text
+        if isinstance(chunk.content, str):
+            return chunk.content
+        return ""
+
+    def _final_code(self, answer: str) -> str:
+        """Structured JSON output wins; markdown fences are the fallback."""
+        try:
+            return self.parser.parse(answer).code
+        except Exception:
+            return self.extract_sysml_code(answer)
 
     def generate_with_feedback(
         self, state: WorkflowState, feedback: str

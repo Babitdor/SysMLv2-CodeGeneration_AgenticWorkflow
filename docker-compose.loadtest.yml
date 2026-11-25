@@ -1,0 +1,30 @@
+# Load-test overlay. Never use it in production.
+#
+# Run a load test with:
+#   sed 's#rate=10r/m#rate=600r/m#' nginx/nginx.conf > nginx/nginx.loadtest.conf
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml \
+#     -f docker-compose.loadtest.yml up -d --wait
+#   python scripts/load_test.py --base-url https://localhost -k --users 50 --duration 120
+#
+# Why this exists: the per-address sign-up budget is deliberately tight - ten
+# per address per fifteen minutes, enforced twice (nginx zone=auth, and
+# SYSML_RATE_AUTH in the app). A load test that registers fifty virtual users
+# from one machine would spend the whole run being throttled by that budget and
+# would measure the limiter instead of the application. The overlay widens both
+# numbers for the duration of the run only; every other production setting is
+# inherited unchanged.
+services:
+  sysml_agent_system:
+    environment:
+      # Sign-up: enough for all virtual users to get an account.
+      SYSML_RATE_AUTH: "200/900"
+      # Chat: the production 20-per-300s per account would reject ~85% of a
+      # virtual user's turns, so the run would measure the limiter instead of
+      # throughput. A separate run against the production budgets is the check
+      # that the limiter itself behaves.
+      SYSML_RATE_CHAT: "1000/300"
+
+  web:
+    volumes:
+      - ./nginx/nginx.loadtest.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./nginx/certs:/etc/nginx/certs:ro

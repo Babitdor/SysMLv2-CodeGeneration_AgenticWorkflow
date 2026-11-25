@@ -1,0 +1,36 @@
+# Lint gate for CI and local runs. Line length is not enforced: the code keeps
+# long explanatory strings, and reflowing them would churn the diff.
+line-length = 100
+
+# The lint gate covers the code this change owns. The original upload model,
+# agent playbooks, tools and microservices predate it and are left alone rather
+# than reformatted in the same breath.
+exclude = [
+    ".git",
+    ".nova",
+    "agents",
+    "microservices",
+    "rag",
+    "states",
+    "tools",
+    "frontend",
+    "Run.py",
+    "build_graph.py",
+    "debug.py",
+    "run_workflow.py",
+]
+
+[lint]
+select = ["E", "F", "W", "I"]
+ignore = [
+    "E501",  # line too long: see above
+    "E402",  # imports after sys.path setup (webapp/server.py, scripts/)
+    "W292",  # no newline at end of file
+]
+
+[lint.per-file-ignores]
+"tests/*" = ["E731"]  # lambda fixtures read better than a def for one line
+# Pre-existing test modules, untouched by this change; their import order is not
+# worth a reformat here.
+"tests/test_model_index.py" = ["I001"]
+"tests/test_sysml_agent_validator.py" = ["I001"]
