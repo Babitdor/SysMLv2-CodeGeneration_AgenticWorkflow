@@ -6,11 +6,36 @@ import pytest
 
 from webapp import db
 
-EXPECTED = ["0001_init.sql", "0002_artifacts.sql", "0003_user_provider_config.sql"]
+EXPECTED = [
+    "0001_init.sql",
+    "0002_artifacts.sql",
+    "0003_user_provider_config.sql",
+    "0004_turn_tool_trace.sql",
+    "0005_user_service_credentials.sql",
+]
 
 
 def test_first_migration_is_recorded(migrated):
     assert db.applied_migrations() == EXPECTED
+
+
+def test_provider_credential_migration_keeps_existing_ciphertext():
+    owner = "1f13fe73-6de0-4503-846f-e556aba247e0"
+    with db.connection() as conn, conn.transaction(force_rollback=True):
+        conn.execute("create schema credential_migration_test")
+        conn.execute("set local search_path to credential_migration_test")
+        conn.execute("create table users (id uuid primary key)")
+        conn.execute((db.MIGRATIONS_DIR / EXPECTED[2]).read_text(encoding="utf-8"))
+        conn.execute("insert into users (id) values (%s)", (owner,))
+        conn.execute(
+            "insert into user_provider_config (user_id, provider, api_key_cipher) values (%s, %s, %s)",
+            (owner, "anthropic", "existing-ciphertext"),
+        )
+        conn.execute((db.MIGRATIONS_DIR / EXPECTED[4]).read_text(encoding="utf-8"))
+        row = conn.execute(
+            "select user_id::text, service, key_cipher from user_service_credentials",
+        ).fetchone()
+        assert row == {"user_id": owner, "service": "anthropic", "key_cipher": "existing-ciphertext"}
 
 
 def test_a_second_run_applies_nothing(migrated):
@@ -18,7 +43,7 @@ def test_a_second_run_applies_nothing(migrated):
     # one must find the schema done and change nothing.
     assert db.apply_migrations() == []
     with db.connection() as conn:
-        rows = conn.execute("select name from schema_migrations").fetchall()
+        rows = conn.execute("select name from schema_migrations order by name").fetchall()
     assert [row["name"] for row in rows] == EXPECTED
 
 

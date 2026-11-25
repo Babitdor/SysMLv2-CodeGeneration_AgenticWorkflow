@@ -45,7 +45,8 @@ MAX_ENTRIES = 256
 # app's full network position.
 _PRIVATE_OK = ("1", "true", "yes", "on")
 
-_COLUMNS = "provider, model, base_url, api_key_cipher, temperature, effort"
+_COLUMNS = "provider, model, base_url, temperature, effort"
+CREDENTIAL_SERVICES = ("ollama", "openai", "openrouter", "anthropic", "tavily")
 _cache: Dict[str, Any] = {}
 _cache_lock = threading.Lock()
 _fernet_instance: Any = None
@@ -80,9 +81,13 @@ def _fernet() -> Any:
 
 def encrypt(key: Any) -> str:
     """Encrypt an api key for storage; "" stays "" and no secret raises."""
-    text = str(key or "").strip()
+    if key is not None and not isinstance(key, str):
+        raise ValueError("Enter the API key as text.")
+    text = (key or "").strip()
     if not text:
         return ""
+    if len(text) > 4096 or any(not 33 <= ord(char) <= 126 for char in text):
+        raise ValueError("Enter a valid API key without spaces or control characters.")
     if not enabled():
         raise ValueError(
             "the operator must set SYSML_SECRET_KEY to store provider keys; "
@@ -92,7 +97,7 @@ def encrypt(key: Any) -> str:
 
 
 def decrypt(token: Any) -> str:
-    """Decrypt a stored token; an unreadable one is "" (the row is dropped)."""
+    """Decrypt a stored token; an unreadable one returns an empty string."""
     if not token:
         return ""
     if not enabled():
@@ -194,6 +199,48 @@ def _forget(user_id: Any) -> None:
         _cache.pop(str(user_id or ""), None)
 
 
+def _write_credential(conn, user_id: str, service: str, cipher: str) -> None:
+    conn.execute(
+        "insert into user_service_credentials (user_id, service, key_cipher) values (%s, %s, %s) "
+        "on conflict (user_id, service) do update set key_cipher = excluded.key_cipher",
+        (user_id, service, cipher),
+    )
+
+
+def save_credential(user_id: str, service: str, api_key: Any) -> None:
+    cipher = encrypt(api_key)
+    if not cipher:
+        raise ValueError("Enter an API key to save.")
+    with db.connection() as conn:
+        _write_credential(conn, user_id, service, cipher)
+
+
+def clear_credential(user_id: str, service: str) -> None:
+    with db.connection() as conn:
+        conn.execute(
+            "delete from user_service_credentials where user_id = %s and service = %s",
+            (user_id, service),
+        )
+
+
+def credential_status(user_id: str) -> Dict[str, bool]:
+    with db.connection() as conn:
+        rows = conn.execute(
+            "select service from user_service_credentials where user_id = %s", (user_id,),
+        ).fetchall()
+    saved = {row["service"] for row in rows}
+    return {service: service in saved for service in CREDENTIAL_SERVICES}
+
+
+def credential(user_id: str, service: str) -> str:
+    with db.connection() as conn:
+        row = conn.execute(
+            "select key_cipher from user_service_credentials where user_id = %s and service = %s",
+            (user_id, service),
+        ).fetchone()
+    return decrypt(row["key_cipher"]) if row else ""
+
+
 def save(user_id: Any, values: Dict[str, Any]) -> Dict[str, Any]:
     """Insert or replace this account's row; a blank api_key keeps the stored one.
 
@@ -203,31 +250,30 @@ def save(user_id: Any, values: Dict[str, Any]) -> Dict[str, Any]:
     """
     key = str(user_id or "")
     cipher = encrypt(values.get("api_key"))
-    if not cipher:
-        existing = load(key, force=True) or {}
-        cipher = str(existing.get("api_key_cipher") or "")
+    provider = str(values.get("provider") or "").strip().lower()
     temperature = values.get("temperature")
     temperature = None if temperature is None else float(temperature)
-    with db.connection() as conn:
+    with db.connection() as conn, conn.transaction():
         conn.execute(
             "insert into user_provider_config "
-            "(user_id, provider, model, base_url, api_key_cipher, temperature, effort) "
-            "values (%s, %s, %s, %s, %s, %s, %s) "
+            "(user_id, provider, model, base_url, temperature, effort) "
+            "values (%s, %s, %s, %s, %s, %s) "
             "on conflict (user_id) do update set "
             "provider = excluded.provider, model = excluded.model, "
-            "base_url = excluded.base_url, api_key_cipher = excluded.api_key_cipher, "
+            "base_url = excluded.base_url, "
             "temperature = excluded.temperature, effort = excluded.effort, "
             "updated_at = now()",
             (
                 key,
-                str(values.get("provider") or "").strip().lower(),
+                provider,
                 str(values.get("model") or "").strip(),
                 str(values.get("base_url") or "").strip(),
-                cipher,
                 temperature,
                 str(values.get("effort") or "").strip(),
             ),
         )
+        if cipher:
+            _write_credential(conn, key, provider, cipher)
     _forget(key)
     return load(key, force=True) or {}
 
@@ -238,27 +284,6 @@ def clear(user_id: Any) -> None:
     with db.connection() as conn:
         conn.execute("delete from user_provider_config where user_id = %s", (key,))
     _forget(key)
-
-
-def _api_key(user_id: str, row: Dict[str, Any]) -> str:
-    """Decrypt this row's key; an unreadable one is dropped, not fatal."""
-    cipher = str(row.get("api_key_cipher") or "")
-    if not cipher:
-        return ""
-    plain = decrypt(cipher)
-    if plain:
-        return plain
-    logger.warning("dropping unreadable provider key for %s", user_id)
-    try:
-        with db.connection() as conn:
-            conn.execute(
-                "update user_provider_config set api_key_cipher = '' where user_id = %s",
-                (user_id,),
-            )
-    except Exception:
-        pass
-    _forget(user_id)
-    return ""
 
 
 # --- Views ------------------------------------------------------------------
@@ -279,7 +304,7 @@ def overrides(user_id: Any) -> Dict[str, str]:
         env["SYSML_EFFORT"] = str(row["effort"])
     if row["temperature"] is not None:
         env["SYSML_TEMPERATURE"] = str(row["temperature"])
-    api_key = _api_key(key, row)
+    api_key = credential(key, str(row["provider"]))
     if api_key:
         env["SYSML_API_KEY"] = api_key
     return env
@@ -301,6 +326,8 @@ def view(user_id: Any, deployment: Optional[Dict[str, Any]] = None) -> Dict[str,
     }
     base.update(deployment or {})
     base["source"] = "deployment"
+    keys = credential_status(str(user_id))
+    base["credentials"] = keys
     row = load(user_id)
     if not row:
         return base
@@ -310,7 +337,8 @@ def view(user_id: Any, deployment: Optional[Dict[str, Any]] = None) -> Dict[str,
         "base_url": str(row["base_url"]),
         "effort": str(row["effort"]),
         "temperature": row["temperature"],
-        "api_key_set": bool(row["api_key_cipher"]),
+        "api_key_set": keys[str(row["provider"])],
+        "credentials": keys,
         "source": "user",
     }
 
@@ -332,4 +360,5 @@ def signature(env: Dict[str, str]) -> tuple:
         str(env.get("SYSML_TEMPERATURE") or "").strip(),
         hashlib.sha256(api_key.encode("utf-8")).hexdigest()[:16] if api_key else "",
         (env.get("SYSML_ENABLE_RAG") or "1").strip().lower(),
+        env.get("_account_backend", ""),
     )

@@ -49,12 +49,22 @@ services:
       retries: 3
       start_period: 20s
 
+  workspace-init:
+    image: postgres:16-alpine
+    user: "0:0"
+    entrypoint: ["/bin/sh", "/init-workspace.sh"]
+    volumes:
+      - agent_workspace:/workspace
+      - ./scripts/init-workspace.sh:/init-workspace.sh:ro
+
   sysml_agent_system:
     build: .
     container_name: sysml-agents
     command: uvicorn webapp.server:app --host 0.0.0.0 --port 8000 --reload
     restart: unless-stopped
     depends_on:
+      workspace-init:
+        condition: service_completed_successfully
       sysml-kernel:
         condition: service_healthy
       postgres:

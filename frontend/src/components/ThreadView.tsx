@@ -68,15 +68,10 @@ export function ThreadView() {
           {empty ? (
             state.loading ? null : (
               <div className="rise mt-[10vh] max-w-[46ch]">
-                <h1 className="font-serif text-[34px] leading-[1.15] text-ink">
-                  Model the system,
-                  <br />
-                  <em className="text-accent">not the markup.</em>
-                </h1>
+                <h1 className="font-serif text-[34px] leading-[1.15] text-ink">What are you modeling?</h1>
                 <p className="mt-3 text-[14.5px] leading-relaxed text-ink-dim">
-                  Ask for a SysML v2 model and it is generated, grammar-checked and
-                  repaired before it reaches you; ask anything else and the answer
-                  comes back grounded in the documents you attach.
+                  Create a SysML v2 model, ask about an engineering document, or open a
+                  model in Canvas and ask for a specific change.
                 </p>
                 <ul className="mt-6 flex flex-col gap-2">
                   {SAMPLES.map((sample) => (
@@ -101,15 +96,19 @@ export function ThreadView() {
               aria-label="Conversation"
               className="flex flex-col gap-5"
             >
-              {state.agentSteps.length > 0 && <ToolTraceAccordion />}
-              {state.messages.map((message, index) => (
-                <Message
-                  key={message.id}
+              {state.messages.map((message, index) => {
+                const active = state.running && index === lastIndex;
+                const steps = active ? state.agentSteps : message.tools;
+                return <div className="flex flex-col gap-3" key={message.id}>
+                  {!!steps?.length && <ToolTraceAccordion steps={steps} active={active} />}
+                  <Message
                   message={message}
-                  streaming={state.running && index === lastIndex}
+                  streaming={active}
                   liveModel={index === lastIndex ? state.artifact : undefined}
-                />
-              ))}
+                    task={state.messages[index - 1]?.text}
+                  />
+                </div>;
+              })}
               {state.running && <ValidationReport />}
             </div>
           )}

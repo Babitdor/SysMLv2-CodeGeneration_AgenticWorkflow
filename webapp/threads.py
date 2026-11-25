@@ -78,6 +78,8 @@ def _message(row: Dict[str, Any]) -> Dict[str, Any]:
     artifact = str(row.get("artifact_id") or "")
     if artifact:
         turn["artifact_id"] = artifact
+    if row.get("tool_trace"):
+        turn["tool_trace"] = row["tool_trace"]
     return turn
 
 
@@ -165,7 +167,7 @@ def load_thread(owner: Optional[str], thread_id: str) -> Optional[Dict[str, Any]
         if row is None:
             return None
         turns = conn.execute(
-            "select role, content, model, validation, "
+            "select role, content, model, validation, tool_trace, "
             "artifact_id::text as artifact_id, "
             "extract(epoch from created_at) as at "
             "from thread_messages where thread_id = %s order by id",
@@ -211,6 +213,7 @@ def append_message(
     model: str = "",
     validation: Optional[Dict[str, Any]] = None,
     artifact_id: Optional[str] = None,
+    tool_trace: Optional[List[Dict[str, Any]]] = None,
 ) -> Optional[Dict[str, Any]]:
     """Add one turn; the first user turn seeds the title.
 
@@ -220,7 +223,7 @@ def append_message(
     role = str(role or "").strip().lower()
     text = (content or "").strip()
     code = (model or "").strip()
-    if role not in _ROLES or not (text or code):
+    if role not in _ROLES or not (text or code or tool_trace):
         return None
     owner_id, wanted = _uuid(owner), _uuid(thread_id)
     if not owner_id or not wanted:
@@ -247,9 +250,9 @@ def append_message(
                 )
             stored = conn.execute(
                 "insert into thread_messages "
-                "(thread_id, role, content, model, validation, artifact_id) "
-                "values (%s, %s, %s, %s, %s, %s) "
-                "returning role, content, model, validation, "
+                "(thread_id, role, content, model, validation, artifact_id, tool_trace) "
+                "values (%s, %s, %s, %s, %s, %s, %s) "
+                "returning role, content, model, validation, tool_trace, "
                 "artifact_id::text as artifact_id, "
                 "extract(epoch from created_at) as at",
                 (
@@ -259,6 +262,7 @@ def append_message(
                     code[:MAX_MODEL_CHARS],
                     Jsonb(verdict) if verdict else None,
                     canvas,
+                    Jsonb(tool_trace or []),
                 ),
             ).fetchone()
             # Keep the newest MAX_MESSAGES turns; the thread's history is bounded.

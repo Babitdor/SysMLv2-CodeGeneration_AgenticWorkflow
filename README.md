@@ -21,8 +21,9 @@ are stored and retrieved as few-shot context for later turns.
   mounted read-only at runtime.
 - **Solution memory** — approved models go into Chroma; later turns retrieve similar
   solutions. Uploaded documents are indexed per account and injected as context.
-- **Per-account providers** — ollama, openai, openrouter or anthropic; an admin sets the
-  deployment default, each account may point its own turns at its own endpoint and key.
+- **Per-account credentials** — in **Settings → Your API keys**, save separate keys for
+  Ollama, OpenAI, OpenRouter, Anthropic, and Tavily. Save your preferred model provider
+  in Settings to use its key. Web search uses your Tavily key.
 - **Multi-tenant by default** — cookies, hashed session tokens, Postgres-keyed rows,
   per-account rate limits, queue bounds and turn deadlines.
 

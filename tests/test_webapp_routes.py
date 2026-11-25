@@ -7,8 +7,8 @@ from pathlib import Path
 
 import pytest
 from fastapi import HTTPException
-
 from support import sse_events
+
 from webapp import server
 
 

@@ -14,10 +14,8 @@ exclude = [
     "states",
     "tools",
     "frontend",
-    "Run.py",
     "build_graph.py",
     "debug.py",
-    "run_workflow.py",
 ]
 
 [lint]

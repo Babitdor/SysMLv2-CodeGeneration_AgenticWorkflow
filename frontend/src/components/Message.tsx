@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Download, Network, Pencil, ShieldCheck } from 'lucide-react';
 import { approveCode } from '../lib/api';
 import { useWorkspace } from '../state/WorkspaceContext';
+import { useAccount } from '../lib/account';
 import type { Message as MessageModel, ValidationResult } from '../lib/types';
 import { CodeBlock, Markdown } from './Markdown';
 import { ValidationReport } from './ValidationReport';
@@ -27,14 +28,18 @@ function ModelActions({
   code,
   validation,
   artifactId,
+  task,
 }: {
   code: string;
   validation?: ValidationResult;
   /** The stored artifact for this turn; absent on turns from before the canvas. */
   artifactId?: string;
+  task?: string;
 }) {
   const { visualize, openArtifact, openDraft } = useWorkspace();
+  const account = useAccount();
   const [notice, setNotice] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
 
   const openCanvas = () => {
     if (artifactId) {
@@ -46,14 +51,17 @@ function ModelActions({
   };
 
   const approve = async () => {
+    setSaving(true);
     setNotice('storing…');
     try {
-      const result = await approveCode(code, 'web approval');
+      const result = await approveCode(code, task || 'Manual SysML model approval');
       setNotice(
         result.stored ? 'stored in the approved-solutions RAG' : (result.validation ?? 'not stored'),
       );
     } catch (err) {
       setNotice(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -91,16 +99,16 @@ function ModelActions({
       >
         <Download className="size-3" />
       </button>
-      <button
+      {account?.role === 'admin' && <button
         type="button"
         onClick={() => void approve()}
-        disabled={!validation?.ok}
+        disabled={saving || validation?.ok === false}
         className="rounded-sm p-1 text-ink-dim transition-colors hover:bg-rule-soft hover:text-ok disabled:opacity-30"
         title="Store as an approved solution"
         aria-label="Approve model"
       >
         <ShieldCheck className="size-3" />
-      </button>
+      </button>}
     </>
   );
 }
@@ -110,10 +118,11 @@ interface Props {
   streaming: boolean;
   /** The model of the turn in flight; once settled it lives on the message. */
   liveModel?: string;
+  task?: string;
 }
 
-export function Message({ message, streaming, liveModel }: Props) {
-  const { openDraft } = useWorkspace();
+export function Message({ message, streaming, liveModel, task }: Props) {
+  const { openDraft, openArtifact } = useWorkspace();
 
   if (message.role === 'user') {
     return (
@@ -140,20 +149,23 @@ export function Message({ message, streaming, liveModel }: Props) {
                 code={code}
                 validation={message.validation}
                 artifactId={message.artifact_id}
+                task={task}
               />
             ) : null
           }
         />
       )}
-      {message.text.trim() && !streaming && (
+      {message.text.trim() && !streaming && !model && (
         <button
           type="button"
           onClick={() =>
-            openDraft({ title: 'note', kind: 'markdown', content: message.text })
+            message.artifact_id
+              ? void openArtifact(message.artifact_id).catch(() => undefined)
+              : openDraft({ title: 'note', kind: 'markdown', content: message.text })
           }
           className="self-start font-mono text-[10px] uppercase tracking-[0.12em] text-ink-dim/70 transition-colors hover:text-accent"
         >
-          send to canvas
+          {message.artifact_id ? 'Open in Canvas' : 'Send to Canvas'}
         </button>
       )}
       {streaming && (
@@ -168,6 +180,7 @@ export function Message({ message, streaming, liveModel }: Props) {
               code={model}
               validation={message.validation}
               artifactId={message.artifact_id}
+              task={task}
             />
           }
         />

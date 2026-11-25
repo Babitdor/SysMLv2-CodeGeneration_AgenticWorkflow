@@ -94,19 +94,18 @@ async def test_a_provider_crash_ends_the_turn_and_releases_the_slot(
         raise RuntimeError("provider fell over")
         yield  # pragma: no cover - unreachable, keeps this a generator
 
-    monkeypatch.setattr(server, "run_sysml_pipeline", explode)
     created = await user_a.client.post("/api/threads", json={})
     thread_id = created.json()["thread"]["id"]
 
-    failed = await user_a.client.post(
-        f"/api/threads/{thread_id}/chat", json={"message": "boom"}
-    )
+    with monkeypatch.context() as patch:
+        patch.setattr(server, "run_sysml_pipeline", explode)
+        failed = await user_a.client.post(
+            f"/api/threads/{thread_id}/chat", json={"message": "boom"}
+        )
     assert any("provider fell over" in str(e.get("detail")) for e in sse_events(failed.text))
 
-    monkeypatch.undo()  # restore the stub pipeline
-    monkeypatch.setattr(server, "MAX_CONCURRENCY", 1)
-    monkeypatch.setattr(server, "MAX_QUEUE", 0)
+    stub.route = "chat"
     again = await user_a.client.post("/api/chat", json={"message": "again"})
 
     assert again.status_code == 200
-    assert sse_events(again.text)[-1]["type"] == "done"
+    assert [event["type"] for event in sse_events(again.text)] == ["route", "token", "token", "done"]

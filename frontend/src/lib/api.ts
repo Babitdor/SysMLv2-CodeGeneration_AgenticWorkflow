@@ -166,7 +166,22 @@ export interface ProviderConfigState {
   temperature: number | null;
   api_key_set: boolean;
   source: 'user' | 'deployment';
+  credentials: Record<CredentialService, boolean>;
 }
+
+export type CredentialService = 'ollama' | 'openai' | 'openrouter' | 'anthropic' | 'tavily';
+
+export const credentialPath = (service: CredentialService) => '/api/credentials/' + service;
+
+export const updateCredential = (service: CredentialService, key: string | null) =>
+  json<{ credentials: ProviderConfigState['credentials'] }>(
+    credentialPath(service),
+    key === null ? { method: 'DELETE' } : {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ api_key: key }),
+    },
+  );
 
 export interface ProviderConfigPayload {
   provider: string;

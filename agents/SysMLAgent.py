@@ -16,6 +16,7 @@ import logging
 import os
 import sys
 import asyncio
+from copy import copy
 from dotenv import load_dotenv
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -140,6 +141,7 @@ class SysMLAgent:
         config_path: str = "agents/prompt/SysML.j2",
         rag_knowledge_base=None,
         tools: Optional[List[BaseTool]] = None,
+        workspace_root: Optional[Path] = None,
     ) -> None:
         self.name = "SysMLAgent"
         self.llm = llm
@@ -159,8 +161,7 @@ class SysMLAgent:
         Include the complete SysML code in the "code" field, validation status in "validated", and any tool usage in the respective fields.
 
         WORKSPACE:
-        - Your shell and filesystem are the Docker container you run in. Every deliverable goes
-          under /workspace: models in /workspace/current/, other artifacts in /workspace/artifacts/.
+        - Save models in /workspace/current/ and other files in /workspace/artifacts/.
         - Files the user uploads arrive in /workspace/uploads/. List them with ls("/workspace/uploads"),
           read them with read_file before modeling, and never assume their content.
         - Save the model with write_file(file_path="/workspace/current/<name>.sysml"), then validate
@@ -173,7 +174,7 @@ class SysMLAgent:
         - Validate the saved file via SysML-validator-tool(file_path=...); use code=... only when no file exists.
         - Diagram playbooks live under /skills/<diagram>/SKILL.md; read them with read_file(limit=1000).
         - /skills/ is read-only. Do not edit SKILL.md or LEARNED.md; report new fix patterns in the JSON.
-        - There is no example-search or syntax-reference tool; skills and /skills/sysml-v2-reference replace them.
+        - Use retrieved reference excerpts from the request and the read-only SysML skills.
         - Set "validated" to true only when the final tool report says "✅ Code is valid!".
         - Local fallback checks and the model's own claims do not establish compiler acceptance.
         """
@@ -197,19 +198,27 @@ class SysMLAgent:
         # The agent's deliverables live in the workspace volume: current/ holds the
         # SysML model files the validator reads back, artifacts/ holds everything
         # else it produces.
-        workspace_root = Path(os.environ.get("SYSML_WORKSPACE_ROOT", "/workspace"))
+        scoped_workspace = workspace_root is not None
+        workspace_root = workspace_root or Path(os.environ.get("SYSML_WORKSPACE_ROOT", "/workspace"))
         for subdir in ("current", "artifacts", "uploads"):
             try:
                 (workspace_root / subdir).mkdir(parents=True, exist_ok=True)
             except OSError as exc:
+                if scoped_workspace:
+                    raise
                 logger.warning("⚠️ Cannot prepare %s: %s", workspace_root / subdir, exc)
 
-        sandbox = LocalShellBackend(
-            root_dir="/",
-            virtual_mode=True,
-            timeout=120,
-            inherit_env=True,
-        )
+        if scoped_workspace:
+            sandbox = FilesystemBackend(root_dir=str(workspace_root), virtual_mode=True)
+            self.system_prompt = (
+                self.system_prompt.replace("/workspace/", "/")
+                + "\nWorkspace paths are virtual and account-scoped. "
+                  "Use filesystem tools for /uploads, /current and /artifacts."
+            )
+        else:
+            sandbox = LocalShellBackend(
+                root_dir="/", virtual_mode=True, timeout=120, inherit_env=True
+            )
         self.sandbox = sandbox
 
         if self.skills_root is not None:
@@ -234,9 +243,13 @@ class SysMLAgent:
 
         # The validator reads saved models through the same backend, so attach it
         # before the agent is built; without a sandbox only inline code validates.
-        for tool in self.tools:
-            if getattr(tool, "sandbox", None) is None and hasattr(tool, "sandbox"):
+        for index, tool in enumerate(self.tools):
+            if hasattr(tool, "sandbox"):
+                tool = copy(tool)
                 tool.sandbox = sandbox
+                if scoped_workspace and tool.name == sysml_validator_tool.name:
+                    tool.model_directory = "/current/"
+                self.tools[index] = tool
 
         # Build the deep agent once: planning/todo, delegation and the diagram
         # skills ride along with the project tools. The checkpointer keeps each
@@ -545,6 +558,7 @@ class SysMLAgent:
                         "args": args,
                         "output": output,
                     }
+                    buffer.clear()
         except Exception as e:
             logger.error(f"SysML Agent streaming error: {e}")
             yield {"type": "error", "detail": str(e)}

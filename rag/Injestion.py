@@ -576,7 +576,8 @@ class SysMLRAGPipeline:
                 content = result["content"]
                 if current_length + len(content) > max_chars:
                     break
-                context_parts.append(content + "\n\n")
+                source = result["metadata"].get("source", "unknown")
+                context_parts.append(f"Source: {source}\n{content}\n\n")
                 current_length += len(content)
 
         # Add general documentation
@@ -586,7 +587,8 @@ class SysMLRAGPipeline:
                 content = result["content"]
                 if current_length + len(content) > max_chars:
                     break
-                context_parts.append(content + "\n\n")
+                source = result["metadata"].get("source", "unknown")
+                context_parts.append(f"Source: {source}\n{content}\n\n")
                 current_length += len(content)
 
         # Add code examples

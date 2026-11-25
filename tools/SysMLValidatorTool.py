@@ -105,6 +105,7 @@ class SysMLValidatorTool(BaseTool):
     )
     args_schema: type[BaseModel] = SysMLValidationInput
     sandbox: Any = Field(default=None, exclude=True, repr=False)
+    model_directory: str = Field(default="/workspace/current/", exclude=True)
 
     def _run(self, code: str | None = None, file_path: str | None = None) -> str:
         if (code is None) == (file_path is None):
@@ -112,9 +113,9 @@ class SysMLValidatorTool(BaseTool):
         if file_path is None:
             return self._checked_code(code, "inline model")
         path = PurePosixPath(file_path)
-        if (not file_path.startswith("/workspace/current/") or path.suffix != ".sysml"
+        if (not file_path.startswith(self.model_directory) or path.suffix != ".sysml"
                 or ".." in path.parts or "\\" in file_path or "\x00" in file_path):
-            return "Validation incomplete: file_path must be a .sysml file under /workspace/current/."
+            return f"Validation incomplete: file_path must be a .sysml file under {self.model_directory}."
         if self.sandbox is None:
             return "Validation incomplete: no sandbox is attached; supply inline code."
         try:

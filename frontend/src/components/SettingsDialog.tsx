@@ -4,22 +4,32 @@ import {
   applyProfile,
   clearProviderConfig,
   configure,
+  credentialPath,
   deleteProfile,
   logout,
   me,
   readConfig,
   readProviderConfig,
   saveProviderConfig,
+  updateCredential,
 } from '../lib/api';
 import type {
   ConfigPayload,
   ConfigState,
+  CredentialService,
   ProviderConfigState,
   SessionUser,
 } from '../lib/api';
 import { useWorkspace } from '../state/WorkspaceContext';
 
 const PROVIDERS = ['ollama', 'openai', 'openrouter', 'anthropic'];
+const SERVICES: Record<CredentialService, string> = {
+  ollama: 'Ollama',
+  openai: 'OpenAI',
+  openrouter: 'OpenRouter',
+  anthropic: 'Anthropic',
+  tavily: 'Tavily web search',
+};
 
 /** One input; the dialog has two forms, so the markup lives here once. */
 function Field({
@@ -87,7 +97,6 @@ interface OwnForm {
   base_url: string;
   effort: string;
   temperature: string;
-  api_key: string;
 }
 
 function ownFieldsFrom(state: ProviderConfigState): OwnForm {
@@ -97,8 +106,6 @@ function ownFieldsFrom(state: ProviderConfigState): OwnForm {
     base_url: state.base_url,
     effort: state.effort,
     temperature: state.temperature === null ? '' : String(state.temperature),
-    // Never echoed back: blank means "keep the stored key".
-    api_key: '',
   };
 }
 
@@ -110,8 +117,6 @@ function fieldsFrom(state: ConfigState): ConfigPayload {
     base_url: state.base_url,
     effort: state.effort,
     temperature: state.temperature,
-    // Never echoed back: blank means "keep the stored key".
-    api_key: '',
   };
 }
 
@@ -126,8 +131,10 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
     base_url: '',
     effort: '',
     temperature: '',
-    api_key: '',
   });
+  const [service, setService] = useState<CredentialService>('openai');
+  const [keyDraft, setKeyDraft] = useState('');
+  const [keyResult, setKeyResult] = useState('');
   const [busy, setBusy] = useState<string | null>(null);
   const [name, setName] = useState('');
   const [result, setResult] = useState<string | null>(null);
@@ -213,11 +220,11 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
         base_url: ownForm.base_url.trim(),
         effort: ownForm.effort.trim(),
         temperature: numberOrNull(ownForm.temperature),
-        api_key: ownForm.api_key.trim(),
       });
       setOwn(next);
       setOwnForm(ownFieldsFrom(next));
       setResult('your turns now use ' + next.provider + '/' + next.model);
+      dispatch({ type: 'refreshHealth' });
     } catch (err) {
       note(err);
     } finally {
@@ -233,8 +240,25 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
       setOwn(next);
       setOwnForm(ownFieldsFrom(next));
       setResult('back to the deployment default: ' + next.provider + '/' + next.model);
+      dispatch({ type: 'refreshHealth' });
     } catch (err) {
       note(err);
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const changeKey = async (key: string | null) => {
+    setBusy('credentials');
+    setKeyResult('');
+    try {
+      const { credentials } = await updateCredential(service, key);
+      setOwn((current) => current && { ...current, credentials });
+      setKeyDraft('');
+      setKeyResult(key === null ? 'API key removed.' : 'API key saved.');
+      dispatch({ type: 'refreshHealth' });
+    } catch (err) {
+      setKeyResult(err instanceof Error ? err.message : String(err));
     } finally {
       setBusy(null);
     }
@@ -300,7 +324,7 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
     <div className="fixed inset-0 z-40 flex items-center justify-center bg-bg/80 p-4 backdrop-blur-sm">
       <div className="rise max-h-full w-full max-w-[440px] overflow-y-auto border border-rule bg-panel">
         <header className="flex items-center justify-between border-b border-rule px-4 py-2.5">
-          <span className="label">backend</span>
+          <span className="label">Settings</span>
           <button
             type="button"
             onClick={onClose}
@@ -342,13 +366,6 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
                 hint="openai-compatible endpoint; blank uses the provider default"
               />
               <Field
-                label="api key"
-                value={ownForm.api_key}
-                onChange={(value) => setOwnField('api_key', value)}
-                placeholder={own.api_key_set ? 'saved — blank keeps it' : 'not set'}
-                type="password"
-              />
-              <Field
                 label="temperature"
                 value={ownForm.temperature}
                 onChange={(value) => setOwnField('temperature', value)}
@@ -366,7 +383,6 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
                 {own.source === 'user'
                   ? 'in use for your turns: ' + own.provider + '/' + own.model
                   : 'inheriting the deployment default: ' + own.provider + '/' + own.model}
-                {own.api_key_set ? ' · key stored' : ''}
               </p>
 
               {result && <p className="font-mono text-[11px] text-ink">{result}</p>}
@@ -391,6 +407,68 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
                   {busy === 'own-clear' ? 'clearing…' : 'clear'}
                 </button>
               </div>
+              <form
+                aria-labelledby="credential-heading"
+                method="post"
+                action={credentialPath(service)}
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  if (!busy) void changeKey(keyDraft);
+                }}
+                className="flex flex-col gap-3 border-t border-rule pt-3"
+              >
+                <h2 id="credential-heading" className="text-sm font-medium">Your API keys</h2>
+                <p className="text-xs text-ink-dim">Save your model provider above to use its key. Web search uses your Tavily key.</p>
+                <label className="flex flex-col gap-1">
+                  <span className="label">Service</span>
+                  <select
+                    name="service"
+                    value={service}
+                    disabled={busy !== null}
+                    onChange={(event) => {
+                      setService(event.target.value as CredentialService);
+                      setKeyDraft('');
+                      setKeyResult('');
+                    }}
+                    className="min-h-12 border border-rule bg-bg px-2 focus-visible:outline-accent"
+                  >
+                    {(Object.keys(SERVICES) as CredentialService[]).map((item) => (
+                      <option key={item} value={item}>
+                        {SERVICES[item]}{own.credentials[item] ? ' · key saved' : ''}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="flex flex-col gap-1">
+                  <span className="label">{SERVICES[service]} API key</span>
+                  <input
+                    type="password"
+                    name="api_key"
+                    autoComplete="off"
+                    autoCorrect="off"
+                    autoCapitalize="none"
+                    spellCheck={false}
+                    maxLength={4096}
+                    required
+                    disabled={busy !== null}
+                    value={keyDraft}
+                    onChange={(event) => setKeyDraft(event.target.value)}
+                    placeholder={own.credentials[service] ? 'Enter a replacement key' : 'Paste your API key'}
+                    className="min-h-12 border border-rule bg-bg px-2 focus-visible:outline-accent"
+                  />
+                </label>
+                <div className="flex items-center gap-2">
+                  <button type="submit" disabled={busy !== null} className="min-h-12 border border-accent/60 px-3 text-sm text-accent disabled:opacity-40">
+                    Save key
+                  </button>
+                  <button type="button" onClick={() => void changeKey(null)}
+                    disabled={busy !== null || !own.credentials[service]}
+                    className="min-h-12 border border-rule px-3 text-sm text-ink-dim hover:text-bad disabled:opacity-40">
+                    Remove key
+                  </button>
+                </div>
+                <p role="status" className="text-xs text-ink-dim">{keyResult}</p>
+              </form>
             </>
           )}
 
@@ -472,13 +550,6 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
                 value={form.base_url === undefined ? '' : String(form.base_url)}
                 onChange={(value) => set('base_url', value)}
                 placeholder="https://api.example.com/v1"
-              />
-              <Field
-                label="api key"
-                value={form.api_key === undefined ? '' : String(form.api_key)}
-                onChange={(value) => set('api_key', value)}
-                placeholder={config?.api_key_set ? 'saved — blank keeps it' : 'not set'}
-                type="password"
               />
               <Field
                 label="reasoning effort"

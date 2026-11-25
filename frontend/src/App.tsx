@@ -62,7 +62,7 @@ function Shell() {
             onOpenSettings={() => setShowSettings(true)}
             onOpenAttachments={() => setShowDocs(true)}
           />
-          <main className="flex min-h-0 flex-1">
+          <main className={'flex min-h-0 min-w-0 flex-1 ' + ((!state.visualizer && !state.model && (state.canvas || state.liveDocument)) ? 'flex-col lg:flex-row' : '')}>
             <div className="flex min-w-0 flex-1 flex-col">
               <TopStrip
                 narrow={narrow}
@@ -75,12 +75,12 @@ function Shell() {
             {/* Keyed by turn: opening another card starts a fresh panel. The
                 output pane is the resting state — the canvas, the visualizer and
                 the model index take the same slot, one at a time. */}
-            {state.canvas ? (
-              <Canvas />
-            ) : state.visualizer ? (
+            {state.visualizer ? (
               <Visualizer key={state.visualizer.code} />
             ) : state.model ? (
               <ModelPanel key={state.model.code} />
+            ) : state.canvas || state.liveDocument ? (
+              <Canvas />
             ) : (
               <OutputPane />
             )}

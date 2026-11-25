@@ -3,6 +3,7 @@ import type { FormEvent, ReactNode } from 'react';
 import { Loader2 } from 'lucide-react';
 import { login, me, register, setUnauthorizedHandler } from '../lib/api';
 import type { SessionUser } from '../lib/api';
+import { Account } from '../lib/account';
 
 type Mode = 'login' | 'register';
 
@@ -65,7 +66,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
     }
   };
 
-  if (user) return <>{children}</>;
+  if (user) return <Account.Provider value={user}>{children}</Account.Provider>;
 
   return (
     <div className="relative flex h-dvh items-center justify-center overflow-hidden p-4">

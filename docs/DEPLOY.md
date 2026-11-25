@@ -66,7 +66,7 @@ the app by hand.
 | `SYSML_ALLOWED_ORIGINS` | — | extra origins allowed to POST (same-host is always allowed) |
 | `SYSML_ENABLE_RAG` | `1` | `0` skips the embedding model and the RAG store |
 | `SYSML_SMOKE` | `0` | `1` answers every turn with a canned stream (smoke/load tests only) |
-| `SYSML_SECRET_KEY` | - | encrypts per-account provider keys at rest; without it the key field is refused |
+| `SYSML_SECRET_KEY` | - | required to save and encrypt per-account API keys |
 | `SYSML_ALLOW_PRIVATE_ENDPOINTS` | `0` | `1` allows a saved base url that resolves to loopback/RFC1918 |
 | `SYSML_STATE_DIR` | `/workspace/state` | advisory-lock file and legacy import root |
 | `SYSML_LOG_LEVEL` | `INFO` | JSON log level |
@@ -79,10 +79,15 @@ Ollama, an OpenAI-compatible gateway, a paid key — from the settings dialog
 `user_provider_config` and layers over the deployment default above; clearing it
 is how an account goes back to that default.
 
-- The account comes from the session, never from the request body, and the key
-  is write-only: the dialog learns `api_key_set`, never the key itself.
-- Keys are encrypted with `SYSML_SECRET_KEY`. With no secret the key field is a
-  400 and only keyless endpoints (a local Ollama) can be saved.
+- **Settings → Your API keys** stores one key per account and service for
+  OpenAI, OpenRouter, Anthropic, Ollama, and Tavily. The session identifies the
+  owner. The API returns only which keys are saved.
+- Model requests use the selected account provider's key. Switching providers or
+  returning to the deployment default keeps the keys available for later use.
+  Tavily web search requires the signed-in account's own Tavily key.
+- Keys are encrypted with `SYSML_SECRET_KEY`. Set a stable value before users
+  save keys. Operator credentials for the managed deployment backend and GitHub
+  corpus ingestion remain server configuration.
 - A saved base url is validated when it is written: `http(s)`, no embedded
   credentials, and no address resolving to loopback, RFC1918, link-local or the
   metadata endpoint unless `SYSML_ALLOW_PRIVATE_ENDPOINTS=1`. The check resolves
@@ -225,12 +230,10 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --wait   #
 
 ## Known limitations
 
-- **The per-user workspace is advisory, not enforced.** The agent runs shell
-  commands inside the app container and each user gets
-  `/workspace/users/<id>/`, but one shared shell means a prompt-injected model
-  could read another user's directory. The container runs as UID 10001, holds no
-  docker socket and carries only the provider key; a per-user container is the
-  follow-up if tenancy has to be hard.
+- **Web agent filesystem.** The container user (UID 10001) needs write access to
+  `/workspace/users`. Each account sees its own `/uploads`, `/current` and
+  `/artifacts` through virtual paths. The web agent uses file tools and reads
+  the bundled reference skills.
 - **Chroma on a shared volume.** The RAG and approved-solutions stores are
   SQLite files behind a `flock`. That is correct on one host and serialises
   writers, but it is the reason not to scale workers indefinitely; a dedicated

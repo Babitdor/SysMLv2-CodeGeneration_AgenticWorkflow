@@ -12,6 +12,7 @@ from rag.Injestion import SysMLRAGPipeline
 import logging
 import os
 from datetime import datetime
+from hashlib import sha256
 import json
 from dotenv import load_dotenv
 
@@ -214,18 +215,28 @@ class SysMLWorkflow:
         # dict mode
         p = provider.get("provider")
         m = provider.get("model")
+        account_backend = provider.get("account_backend", False)
+        base_url = provider.get("base_url")
+        api_key = provider.get("api_key")
+        if account_backend and not api_key:
+            if p == "openai" and base_url:
+                api_key = "local"
+            elif p in ("openai", "openrouter", "anthropic"):
+                raise ValueError(f"Add your {p} API key in Settings to use this backend.")
 
         if p == "openai":
             from langchain_openai import ChatOpenAI
 
             options: Dict[str, Any] = {
                 "model": m,
-                "api_key": provider.get("api_key") or os.getenv("OPENAI_API_KEY"),
+                "api_key": api_key or os.getenv("OPENAI_API_KEY"),
                 "temperature": provider.get("temperature", self.temperature),
             }
 
             # Endpoint first, then the optional knobs (dict wins, env is the fallback).
-            base_url = provider.get("base_url") or os.getenv("OPENAI_BASE_URL")
+            base_url = base_url or (
+                "https://api.openai.com/v1" if account_backend else os.getenv("OPENAI_BASE_URL")
+            )
             if base_url:
                 options["base_url"] = base_url
 
@@ -248,34 +259,54 @@ class SysMLWorkflow:
             from langchain_openai import ChatOpenAI
 
             return ChatOpenAI(
-                api_key=os.getenv("OPENROUTER_API_KEY"),  # type: ignore
-                base_url="https://openrouter.ai/api/v1",
+                api_key=api_key or os.getenv("OPENROUTER_API_KEY"),  # type: ignore
+                base_url=base_url or "https://openrouter.ai/api/v1",
                 model=m,
                 temperature=provider.get("temperature", self.temperature),
             )
 
         if p == "anthropic":
+            from anthropic import Omit
             from langchain_anthropic import ChatAnthropic
 
             return ChatAnthropic(
                 model_name=m, # type: ignore
-                api_key=os.getenv("ANTHROPIC_API_KEY"),  # type: ignore
+                api_key=api_key or os.getenv("ANTHROPIC_API_KEY"),  # type: ignore
+                base_url=base_url or ("https://api.anthropic.com" if account_backend else None),
                 timeout=provider.get("timeout", 30),
                 temperature=provider.get("temperature", self.temperature),
                 max_tokens_to_sample=provider.get("max_tokens", 4096),
                 stop=None,
+                model_kwargs={"extra_headers": {"Authorization": Omit()}} if account_backend else {},
             )
 
         if p == "ollama":
             from langchain_ollama import ChatOllama
 
+            options = {}
+            if account_backend or api_key:
+                def authenticate(request):
+                    if api_key:
+                        request.headers["Authorization"] = f"Bearer {api_key}"
+                    else:
+                        request.headers.pop("Authorization", None)
+                    return request
+
+                # Override the SDK's automatic use of OLLAMA_API_KEY.
+                options["client_kwargs"] = {
+                    "headers": {"Authorization": "Account"},
+                    "auth": authenticate,
+                    "follow_redirects": False,
+                }
             return ChatOllama(
                 model=m,
+                base_url=base_url or ("https://ollama.com" if api_key else None),
                 temperature=provider.get("temperature", self.temperature),
                 num_ctx=provider.get("num_ctx", self.context_length),
+                **options,
             )
 
-        raise ValueError(f"Unknown provider type: {provider}")
+        raise ValueError(f"Unknown provider type: {p}")
 
     def _build_workflow(self) -> StateGraph:
         """Build the simplified LangGraph workflow"""
@@ -428,10 +459,13 @@ class SysMLWorkflow:
             return "end"
 
     def _update_knowledge_base(
-        self, state: Union[WorkflowState, Dict[str, Any]]
+        self, state: Union[WorkflowState, Dict[str, Any]], *, strict: bool = False
     ) -> Dict[str, Any]:
         """Update approved solutions knowledge base"""
         workflow_state = self._ensure_workflow_state(state)
+
+        if strict and not (self.enable_approved_solutions and self.approved_solutions_db):
+            raise RuntimeError("The approved-solutions store is unavailable")
 
         try:
             if (
@@ -441,8 +475,8 @@ class SysMLWorkflow:
             ):
                 logger.info("💾 Storing approved solution in database...")
 
-                # Create unique ID
-                solution_id = f"sysml_{abs(hash(workflow_state.code))}_{int(datetime.now().timestamp())}"
+                identity = json.dumps([workflow_state.original_query, workflow_state.code])
+                solution_id = "sysml_" + sha256(identity.encode("utf-8")).hexdigest()
 
                 # Prepare metadata
                 metadata = {
@@ -501,6 +535,8 @@ class SysMLWorkflow:
                 )
 
         except Exception as e:
+            if strict:
+                raise
             logger.error(f"❌ Error in knowledge base update: {str(e)}")
             import traceback
 

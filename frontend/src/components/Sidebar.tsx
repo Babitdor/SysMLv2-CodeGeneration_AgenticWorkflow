@@ -334,7 +334,7 @@ export function TopStrip({
   drawerOpen: boolean;
   onOpenDrawer: () => void;
 }) {
-  const { state, openModel } = useWorkspace();
+  const { state, openModel, openArtifact, openDraft } = useWorkspace();
   const model = lastModel(state.messages);
 
   return (
@@ -355,11 +355,22 @@ export function TopStrip({
       <h2 className="min-w-0 truncate text-[13px] text-ink-dim">
         {state.title || (narrow ? 'SysML v2' : 'New chat')}
       </h2>
+      {!state.canvas && <button
+        type="button"
+        onClick={() => {
+          const latest = state.artifacts[0];
+          if (latest) void openArtifact(latest.id).catch(() => undefined);
+          else openDraft({ title: 'Untitled model', kind: 'code', content: '' });
+        }}
+        className="ml-auto shrink-0 rounded-md border border-rule px-2.5 py-1.5 text-xs text-ink-dim hover:text-ink"
+      >
+        Canvas
+      </button>}
       <button
         type="button"
         onClick={() => openModel(model)}
         disabled={!model}
-        className="ml-auto rounded-sm p-1.5 text-ink-dim transition-colors hover:bg-rule-soft hover:text-ink disabled:opacity-40 disabled:hover:bg-transparent"
+        className={(state.canvas ? 'ml-auto ' : '') + 'rounded-sm p-1.5 text-ink-dim transition-colors hover:bg-rule-soft hover:text-ink disabled:opacity-40 disabled:hover:bg-transparent'}
         title={model ? 'Model index' : 'Model index (no model yet)'}
         aria-label="Model index"
       >

@@ -1,6 +1,6 @@
 // The wire contract: mirrors the SSE table in the plan and webapp/pipeline.py.
 
-export type Route = 'general_chat' | 'sysml_generation';
+export type Route = 'general_chat' | 'sysml_generation' | 'document' | 'artifact_edit' | 'web_search' | 'visualize';
 export type ToolStatus = 'start' | 'done' | 'failed';
 export type ValidationStatus = 'valid' | 'invalid' | 'error';
 
@@ -54,6 +54,7 @@ export interface Message {
   validation?: ValidationResult;
   /** The canvas artifact this turn produced; absent on older or deleted ones. */
   artifact_id?: string;
+  tools?: ToolStep[];
   /** Set once the turn ended without the stream's own `done` event. */
   stopped?: boolean;
 }
@@ -75,6 +76,7 @@ export interface StoredTurn {
   validation?: ValidationResult;
   /** The canvas artifact this turn produced; absent on older or deleted ones. */
   artifact_id?: string;
+  tool_trace?: Extract<SSEEvent, { type: 'tool' }>[];
   at?: number;
 }
 
@@ -91,6 +93,8 @@ export interface ThreadChatPayload {
   message: string;
   doc_ids?: string[];
   artifact?: string;
+  canvas_kind?: ArtifactKind;
+  canvas_title?: string;
 }
 
 export interface ToolSchema {
@@ -165,6 +169,10 @@ export type SSEEvent =
   | { type: 'tool'; name: string; status: ToolStatus; attempt?: number; detail?: string; call_id?: string; summary?: string; args?: string; output?: string; chars?: number; truncated?: boolean; ms?: number }
   | { type: 'token'; text: string }
   | { type: 'code'; code: string; attempt: number; final: boolean }
+  | { type: 'document_delta'; text: string }
+  | { type: 'edit_delta'; content: string; line: number; old: string; new: string }
+  | { type: 'edit_complete'; changed: boolean }
+  | { type: 'visualize'; code: string }
   | ({ type: 'validation' } & Omit<ValidationResult, 'source'>)
   | { type: 'pipeline'; status: 'done' | 'exhausted' | 'error'; attempts: number; valid: boolean }
   | { type: 'artifact'; artifact: ArtifactSummary }

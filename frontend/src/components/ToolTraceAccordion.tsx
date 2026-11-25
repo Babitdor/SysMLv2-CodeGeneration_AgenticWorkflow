@@ -1,6 +1,5 @@
 import { useState } from 'react';
 import { Check, ChevronDown, Circle, Loader2, X } from 'lucide-react';
-import { useWorkspace } from '../state/WorkspaceContext';
 import type { ToolStep } from '../lib/types';
 
 const LABELS: Record<string, string> = {
@@ -12,6 +11,11 @@ const LABELS: Record<string, string> = {
   glob: 'Finding files',
   ls: 'Listing files',
   retrieve_documents: 'Retrieving documents',
+  retrieve_sysml: 'Retrieving SysML references',
+  retrieve_approved: 'Finding approved models',
+  edit_artifact: 'Editing Canvas',
+  'SysML-validator-tool': 'Checking saved model',
+  write_todos: 'Updating task list',
   write_file: 'Writing file',
   edit_file: 'Editing file',
   bash: 'Running command',
@@ -20,7 +24,9 @@ const LABELS: Record<string, string> = {
 };
 
 /** Named reads are counted apart from actions in the header line. */
-const READS = new Set(['read_file', 'grep', 'ls', 'glob', 'retrieve_documents']);
+const READS = new Set([
+  'read_file', 'grep', 'ls', 'glob', 'retrieve_documents', 'retrieve_sysml', 'retrieve_approved',
+]);
 
 function describe(step: ToolStep): string {
   const base = LABELS[step.name] ?? step.name;
@@ -36,11 +42,23 @@ function duration(ms: number): string {
 /** 8421 -> "8 421": the char counts read better grouped than as one run. */
 const group = (count: number) => String(count).replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
 
-function StatusIcon({ status }: { status: ToolStep['status'] }) {
+function StatusIcon({ status }: { status?: ToolStep['status'] }) {
   if (status === 'start') return <Loader2 className="size-3 animate-spin text-accent" />;
   if (status === 'done') return <Check className="size-3 text-ok" />;
   if (status === 'failed') return <X className="size-3 text-bad" />;
   return <Circle className="size-2 text-ink-dim" />;
+}
+
+function readTasks(step: ToolStep): { content: string; status: string }[] {
+  if (step.name !== 'write_todos' || !step.args) return [];
+  try {
+    const tasks = JSON.parse(step.args).todos;
+    return Array.isArray(tasks) ? tasks.filter(
+      (task) => typeof task?.content === 'string' && typeof task?.status === 'string',
+    ) : [];
+  } catch {
+    return [];
+  }
 }
 
 function TraceRow({
@@ -53,7 +71,8 @@ function TraceRow({
   onToggle: () => void;
 }) {
   // Only a row with a payload is a disclosure; a pipeline stage stays one line.
-  const expandable = Boolean(step.args || step.output);
+  const expandable = Boolean(step.args || step.output || step.detail);
+  const tasks = open ? readTasks(step) : [];
   const body = (
     <>
       <StatusIcon status={step.status} />
@@ -62,6 +81,9 @@ function TraceRow({
       </span>
       {step.summary && (
         <span className="min-w-0 truncate text-ink-dim/80">{step.summary}</span>
+      )}
+      {!step.summary && step.detail && step.name !== 'routing' && (
+        <span className="min-w-0 truncate text-ink-dim">{step.detail}</span>
       )}
       {step.ms !== undefined && (
         <span className="ml-auto shrink-0 pl-2 text-[10.5px] text-ink-dim/60">
@@ -94,7 +116,17 @@ function TraceRow({
       )}
       {expandable && open && (
         <div className="pb-1.5 pl-7 pr-1 pt-1">
-          {step.args && (
+          {tasks.length > 0 ? (
+            <ol className="space-y-1 py-1 text-xs text-ink">
+              {tasks.map((task, index) => (
+                <li className="flex items-center gap-2" key={index}>
+                  <StatusIcon status={task.status === 'completed' ? 'done' : task.status === 'in_progress' ? 'start' : undefined} />
+                  <span>{task.content}</span>
+                  <span className="sr-only">{task.status.replaceAll('_', ' ')}</span>
+                </li>
+              ))}
+            </ol>
+          ) : step.args && (
             <pre className="mb-1 max-h-32 overflow-auto whitespace-pre-wrap break-words border border-rule-soft bg-panel/40 px-2 py-1 font-mono text-[11px] leading-relaxed text-ink-dim">
               {step.args}
             </pre>
@@ -115,13 +147,12 @@ function TraceRow({
   );
 }
 
-export function ToolTraceAccordion() {
-  const { state } = useWorkspace();
-  const [open, setOpen] = useState(false);
+export function ToolTraceAccordion({ steps, active = false }: { steps: ToolStep[]; active?: boolean }) {
+  const [open, setOpen] = useState(active);
   const [expanded, setExpanded] = useState<string | null>(null);
 
-  const reads = state.agentSteps.filter((step) => READS.has(step.name)).length;
-  const actions = state.agentSteps.length - reads;
+  const reads = steps.filter((step) => READS.has(step.name)).length;
+  const actions = steps.length - reads;
 
   return (
     <div className="border border-rule-soft bg-panel/40">
@@ -135,19 +166,19 @@ export function ToolTraceAccordion() {
           <ChevronDown
             className={'size-3 transition-transform ' + (open ? '' : '-rotate-90')}
           />
-          tool trace · {state.agentSteps.length}
+          Activity · {steps.length}
           {actions > 0 && ' · ' + actions + ' ops'}
           {reads > 0 && ' · ' + reads + ' reads'}
         </span>
         <span className="flex items-center gap-1.5">
-          {state.agentSteps.slice(-3).map((step) => (
+          {steps.slice(-3).map((step) => (
             <StatusIcon key={step.id} status={step.status} />
           ))}
         </span>
       </button>
       {open && (
         <ol className="border-t border-rule-soft px-3 py-2">
-          {state.agentSteps.map((step) => (
+          {steps.map((step) => (
             <TraceRow
               key={step.id}
               step={step}

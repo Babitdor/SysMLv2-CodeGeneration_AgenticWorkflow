@@ -4,6 +4,7 @@ import { highlight, TOKEN_CLASS } from '../lib/markdown';
 import { useMediaQuery } from '../lib/useMediaQuery';
 import type { ValidationStatus } from '../lib/types';
 import { useWorkspace } from '../state/WorkspaceContext';
+import { useAccount } from '../lib/account';
 
 const INLINE = '(min-width: 1100px)';
 const GHOST =
@@ -22,6 +23,7 @@ const BADGE: Record<ValidationStatus | 'pending', string> = {
  */
 export function OutputPane() {
   const { state } = useWorkspace();
+  const account = useAccount();
   const inline = useMediaQuery(INLINE);
   const [verdict, setVerdict] = useState('');
   const [saving, setSaving] = useState(false);
@@ -30,15 +32,16 @@ export function OutputPane() {
   // Live stream first, then the turn's stored model so Approve survives a reload.
   const turn = [...state.messages]
     .reverse()
-    .find((message) => message.role === 'assistant' && (message.model || message.validation));
+    .find((message) => message.role === 'assistant' && message.model);
   const code = state.artifact || turn?.model || '';
-  const validation = state.validationLogs[state.validationLogs.length - 1] ?? turn?.validation;
+  const validation = state.artifact
+    ? (state.validationLogs[state.validationLogs.length - 1] ?? turn?.validation)
+    : turn?.validation;
   // While a turn streams, the verdict on screen is about the previous model.
   const status: ValidationStatus | 'pending' = state.running
     ? 'pending'
     : (validation?.status ?? 'pending');
-  const prompt =
-    [...state.messages].reverse().find((message) => message.role === 'user')?.text ?? '';
+  const prompt = turn ? state.messages[state.messages.indexOf(turn) - 1]?.text ?? '' : '';
   const tokens = useMemo(() => highlight(code, 'sysml'), [code]);
 
   if (!inline || !code.trim()) return null;
@@ -81,7 +84,7 @@ export function OutputPane() {
         <button type="button" className={GHOST} onClick={() => void copy()}>
           {copied ? 'copied' : 'copy'}
         </button>
-        <button
+        {account?.role === 'admin' && <button
           type="button"
           className={GHOST}
           onClick={() => void approve()}
@@ -89,7 +92,7 @@ export function OutputPane() {
           title={status === 'valid' ? 'Store as an approved solution' : 'Needs a valid model first'}
         >
           {saving ? 'saving…' : 'approve → kb'}
-        </button>
+        </button>}
       </div>
 
       <pre className="min-h-0 flex-1 overflow-auto px-3 py-3 font-mono text-[11.5px] leading-[1.65] whitespace-pre text-ink/90">

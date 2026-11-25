@@ -21,7 +21,7 @@ webapp/static/ui/
 # Model/vector stores and snapshots
 rag/chroma_db/
 rag/approved_solutions/
-state/
+/state/
 *.zip
 
 # Local tooling state and one-off scratch scripts
